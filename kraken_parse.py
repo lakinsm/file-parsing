@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 
-## This script replaces old headers with new headers for fasta database files
 ## Note the following from the Kraken manual for parsing purposes:
 ##
 # OUTPUT FORMAT
