@@ -71,6 +71,7 @@ class SamParser:
     def __iter__(self):
         return self
 
+    @property
     def _iterate(self):
         # Skip all leading whitespace
         while True:
@@ -96,13 +97,14 @@ class SamParser:
         assert False, "Should not reach this line"
 
     def next(self):
-        if not self.stdin and type(self.sam_file) is str:  # only open file here if sam_file is a str and not file
+        if not self.stdin and type(self.sam_file) is str:  # only open file here if sam_file is a str and not fileIO
             self.sam_file = open(self.sam_file, "r")
-        value = self._iterate()
+        value = self._iterate
         if not value:  # close file on EOF
             if not self.stdin:
                 self.sam_file.close()
-            print("{0} with both mates mapped out of {1} total reads\n".format(self.reads_mapping, self.reads_total))
+            sys.stdout.write("\n{:d} with both mates mapped out of {:d} total reads\n".format(self.reads_mapping, self.reads_total))
+            sys.stdout.flush()
             raise StopIteration()
         else:
             return value
