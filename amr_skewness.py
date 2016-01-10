@@ -65,8 +65,6 @@ class SamParser:
         self.current_line = None
         self.reads_mapping = 0
         self.reads_total = 0
-        # Allowable bitflags for SAM file -> reads with both mates mapping, regardless of other flags
-        self.true_flags = (99, 147, 83, 163, 67, 131, 115, 179, 81, 161, 97, 145, 65, 129, 113, 177)
 
     def __iter__(self):
         return self
@@ -90,7 +88,7 @@ class SamParser:
                     sys.stdout.write("\rReads processed: {}".format(self.reads_total))
                     sys.stdout.flush()
                 temp = sam_line.split()
-                if int(temp[1]) in self.true_flags and temp[2] is not "*" and int(temp[3]) is not 0:
+                if ((int(temp[1]) & 4) is 0) and temp[2] is not "*" and int(temp[3]) is not 0:
                     self.reads_mapping += 1
                     return temp[1], temp[2], temp[3], temp[9]
         self.sam_file.close()  # catch all in case this line is reached
@@ -136,12 +134,15 @@ if __name__ == '__main__':
     ## Output a master file describing each mapped vector/metric and a coverage graph for each mapped gene.
     with open(outfile, 'w') as out:
         vector_hash = {}  # This stores gene names that were referenced in the SAM file, along with their vectors
+        vector_counts = {}  # This stores gene names as in the other dictionary, but stores read counts instead
         for line in SamParser(infile):
             if len(line) is 2:
                 vector_hash[line[0]] = np.zeros(int(line[1])).astype('int')  # new entry, initialize vector
+                vector_counts[line[0]] = 0
             else:
                 vector_hash[line[1]][(int(line[2])-1):(int(line[2])-1)+len(line[3])] += 1  # increment affected region
-        out.write('Accession_Name,Accession_Length,Coverage,Shannon_Entropy,L2norm_Deviation,Vector\n')  # headers for outfile
+                vector_counts[line[1]] += 1  # increment counter
+        out.write('Accession_Name,Accession_Length,Hits,Coverage,Shannon_Entropy,L2norm_Deviation,Vector\n')  # headers for outfile
         plt.ioff()  # no interactive mode
         plt.hold(False)  # don't keep plot
         for key, value in vector_hash.iteritems():
@@ -155,7 +156,7 @@ if __name__ == '__main__':
                 norm_vec = value**float(1) / sum(value)  # normalize so the vector sums to 1 (frequency)
                 shannon = np.negative(sum([x*np.log2(x) for x in norm_vec if x > 0]))  # Shannon entropy
                 l2norm = ((np.sqrt(sum(norm_vec*norm_vec))*np.sqrt(len(norm_vec))) - 1) / (np.sqrt(len(norm_vec)) - 1)  # Deviation from the L2 norm unit sphere
-                out.write(",".join([key, str(len(value)), str(coverage), str(shannon), str(l2norm), " ".join([str(x) for x in value])])+'\n')
+                out.write(",".join([key, str(len(value)), str(vector_counts[key]), str(coverage), str(shannon), str(l2norm), " ".join([str(x) for x in value])])+'\n')
 
                 ## Plot figure
                 plt.plot(value)
