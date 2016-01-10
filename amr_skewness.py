@@ -101,7 +101,7 @@ class SamParser:
         if not value:  # close file on EOF
             if not self.stdin:
                 self.sam_file.close()
-            sys.stdout.write("\n{:d} with both mates mapped out of {:d} total reads\n".format(self.reads_mapping, self.reads_total))
+            sys.stdout.write("\n{:d} reads mapped out of {:d} total reads\n".format(self.reads_mapping, self.reads_total))
             sys.stdout.flush()
             raise StopIteration()
         else:
