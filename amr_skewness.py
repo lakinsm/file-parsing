@@ -154,8 +154,9 @@ if __name__ == '__main__':
                 ## Calculate metrics
                 coverage = float(sum(value > 0)) / len(value)  # what percentage of the gene has a read aligned?
                 norm_vec = value**float(1) / sum(value)  # normalize so the vector sums to 1 (frequency)
-                shannon = np.negative(sum([x*np.log2(x) for x in norm_vec if x > 0]))  # Shannon entropy
-                l2norm = ((np.sqrt(sum(norm_vec*norm_vec))*np.sqrt(len(norm_vec))) - 1) / (np.sqrt(len(norm_vec)) - 1)  # Deviation from the L2 norm unit sphere
+                max_entropy = np.ones(len(norm_vec)) / len(norm_vec)  # this is used to calculate the maximum shannon entropy for a given vector
+                shannon = np.negative(sum([x*np.log2(x) for x in norm_vec if x > 0])) / np.negative(sum([x*np.log2(x) for x in max_entropy])) # Shannon entropy
+                l2norm = 1 - ((np.sqrt(sum(norm_vec*norm_vec))*np.sqrt(len(norm_vec))) - 1) / (np.sqrt(len(norm_vec)) - 1)  # Deviation from the L2 norm unit sphere
                 out.write(",".join([key, str(len(value)), str(vector_counts[key]), str(coverage), str(shannon), str(l2norm), " ".join([str(x) for x in value])])+'\n')
 
                 ## Plot figure
