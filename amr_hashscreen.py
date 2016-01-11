@@ -83,7 +83,7 @@ class HashScreen:
                     else:
                         self.fq_file.readline()
                         self.fq_file.readline()
-                return self.read_name, self.seq
+                    return self.read_name, self.seq
         self.fq_file.close()  # catch all in case this line is reached
         assert False, "Should not reach this line"
 
@@ -163,6 +163,6 @@ if __name__ == '__main__':
             break
         for i in range(len(seq)-window):
             if seq[i:i+window] in db_hash:
-                print('>'+name+'\n'+seq+'\n')
+                sys.stdout.write('>'+name+'\n'+seq+'\n')
                 break
     sys.stderr.write('\nDone.\n')
