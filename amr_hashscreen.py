@@ -23,14 +23,16 @@ import cPickle as pickle
 import multiprocessing as mp
 import sys
 import logging
+import resource
 
 
 ##########
 ## Vars ##
 ##########
 db_hash = set()
-chunksize = 50000
+chunksize = 20000000
 window = 20
+overall = 0
 
 
 #############
@@ -98,6 +100,10 @@ def split(a, n):
     return (a[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in xrange(n))
 
 
+def current_mem_usage():
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+
+
 ##############
 ## ArgParse ##
 ##############
@@ -113,6 +119,7 @@ parser.add_argument('-n', '--num_process', type=int, default=1, help='Number of 
 ## Main ##
 ##########
 if __name__ == '__main__':
+    mp.freeze_support()
     ## Setup the logger
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
@@ -134,14 +141,28 @@ if __name__ == '__main__':
     if args.save:
         pickle.dump(db_hash, open(args.save, 'wb'))
     ## Read in each fastq chunk and check for membership
-    pool = mp.Pool()
+
     while True:
-            chunks = [z for z in split([x for x in fastq_parse()], args.num_process)]
-            check = sum([len(x) for x in chunks])
-            if check is 0:
-                break
-            pool.map(worker, chunks)
-            handler.flush()
-            if check < chunksize:
-                break
+        pool = mp.Pool(processes=args.num_process)
+        chunks = [z for z in split([x for x in fastq_parse()], args.num_process)]
+        sys.stderr.write('\nMemory used: {}MB'.format(current_mem_usage()))
+        check = sum([len(x) for x in chunks])
+        overall += check
+        sys.stderr.write('\nTotal reads processed {}'.format(overall))
+        if check is 0:
+            pool.close()
+            pool.join()
+            pool.terminate()
+            del pool
+            break
+        res = pool.map(worker, chunks)
+        handler.flush()
+        sys.stderr.write('\nFinished block.  Loading next chunk\n')
+        del chunks
+        if check < chunksize:
+            pool.close()
+            pool.join()
+            pool.terminate()
+            del pool
+            break
 
