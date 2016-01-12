@@ -128,6 +128,7 @@ parser.add_argument('-d', '--database', nargs='?', default=None, help='File path
 parser.add_argument('-p', '--pickle', nargs='?', default=None, help='Optional flag: database is a pickled hash table')
 parser.add_argument('-s', '--save', nargs='?', default=None, help='Optional: save the hash table to a pickle file')
 parser.add_argument('-n', '--num_process', type=int, default=1, help='Number of processes to run in parallel')
+parser.add_argument('-k', '--kmer', type=int, default=20, help='K-mer size')
 
 
 ##########
@@ -150,6 +151,7 @@ if __name__ == '__main__':
 
     ## Parse the arguments using ArgParse
     args = parser.parse_args()
+    window = args.kmer
 
     ## Either pickle or database must be defined
     if not args.pickle and not args.database:
