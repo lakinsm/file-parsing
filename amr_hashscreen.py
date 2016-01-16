@@ -136,6 +136,10 @@ parser.add_argument('-k', '--kmer', type=int, default=20, help='K-mer size')
 ##########
 if __name__ == '__main__':
     mp.freeze_support()
+    ## Parse the arguments using ArgParse
+    args = parser.parse_args()
+    window = args.kmer
+
     ## Input must be on stdin; raise error if this is not the case
     if sys.stdin.isatty():
         raise IOError('Input must be on stdin.  Use stream redirect for correct functionality: cat file | script.py')
@@ -148,10 +152,6 @@ if __name__ == '__main__':
     handler = logging.StreamHandler(stream=sys.stdout)
     handler.setLevel(logging.DEBUG)
     root.addHandler(handler)
-
-    ## Parse the arguments using ArgParse
-    args = parser.parse_args()
-    window = args.kmer
 
     ## Either pickle or database must be defined
     if not args.pickle and not args.database:
