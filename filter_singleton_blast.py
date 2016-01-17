@@ -7,28 +7,67 @@
 ## Imports ##
 #############
 import argparse
+import numpy as np
 
 
 ##########
 ## Vars ##
 ##########
-pass_filter = []
+pass_filter = {}
+high_similarity = {}
+identical = {}
+gene_hash = set()
+annodict = {}
 
 
 #############
 ## Methods ##
 #############
-def filter_hits(infile, outfile):
-    with open(infile, 'r') as hitfile, open(outfile, 'w') as out:
-        data = hitfile.read().strip().split()
+def index_max(values):
+    return max(xrange(len(values)), key=values.__getitem__)
+
+
+def filter_hits(infile, outfile, annotfile, tranfile):
+    with open(infile, 'r') as hitfile, open(outfile, 'w') as out, open(tranfile, 'w') as tranout, open(annotfile, 'r') as annot:
+        annotations = annot.read().strip().split('\n')[1:]
+        [annodict.setdefault(x.split(',')[0], []).append(x.split(',')[1:]) for x in annotations]
+        data = hitfile.read().strip().split('\n')[1:]
         for hit in data:
             info = hit.split('\t')
-            gene_id, target_acc, target_id, gene_len, gene_start, gene_stop, target_len, _, evalue, pident, \
+            gene_id, target_acc, target_id, gene_len, gene_start, gene_stop, target_len, _, _, evalue, pident, \
                 target_title, seq = info
-            if int(pident) > 99:
+            name = str(target_id)+str(target_acc)
+            gene_hash.add(gene_id)
+            if (int(gene_stop) - int(gene_start)) < (int(gene_len) / 2):
                 continue
-            if int(target_len) < (int(gene_len) / 2):
+            if int(float(pident)) is 100:
+                identical.setdefault(gene_id, []).append((name, int(gene_stop) - int(gene_start), seq))
                 continue
+            if int(float(pident)) > 99:
+                high_similarity.setdefault(gene_id, []).append((name, int(gene_stop) - int(gene_start), seq))
+            pass_filter.setdefault(gene_id, []).append((name, seq))
+        for gene in gene_hash:
+            if gene not in pass_filter.keys():
+                if gene not in high_similarity.keys():
+                    if gene not in identical.keys():
+                        print gene
+                        continue
+                    zipped = zip(*identical[gene])
+                    max_indices = np.where(np.array(zipped[1]) == max(zipped[1]))[0].tolist()
+                    [pass_filter.setdefault(gene, []).append((y[0], y[2])) for y in [identical[gene][x] for x in max_indices]]
+                else:
+                    zipped = zip(*high_similarity[gene])
+                    max_indices = np.where(np.array(zipped[1]) == max(zipped[1]))[0].tolist()
+                    [pass_filter.setdefault(gene, []).append((y[0], y[2])) for y in [high_similarity[gene][x] for x in max_indices]]
+            if gene not in pass_filter.keys():
+                raise Exception('Should not reach this line')
+        for key, entry in pass_filter.iteritems():
+            tranout.write(entry[0][0]+'|singleton_addition,'+','.join(annodict[key][0])+'\n')
+            out.write('>'+entry[0][0]+'|singleton_addition\n'+entry[0][1].replace('-', '')+'\n')
+
+
+
+
 
 
 
@@ -40,7 +79,9 @@ def filter_hits(infile, outfile):
 ##############
 parser = argparse.ArgumentParser('amr_skewness.py')
 parser.add_argument('infile', type=str, help='File path to custom BLAST tabular output file')
+parser.add_argument('annotation_file', type=str, help='File path to annotation file for translation')
 parser.add_argument('outfile', type=str, help='File path to output file')
+parser.add_argument('new_annotations_file', type=str, help='File path to output new annotations')
 args = parser.parse_args()
 
 
@@ -48,4 +89,5 @@ args = parser.parse_args()
 ## Main ##
 ##########
 if __name__ == '__main__':
-    filter_hits(args.infile, args.outfile)
+    filter_hits(args.infile, args.outfile, args.annotation_file, args.new_annotations_file)
+
