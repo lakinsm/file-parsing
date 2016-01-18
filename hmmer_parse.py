@@ -256,7 +256,7 @@ class HmmerWalk:
         self.hmmer_file.close()  # catch all in case this line is reached
         assert False, 'Should not reach this line'
 
-    def calculate_false(self):
+    #def calculate_false(self):
         ## Bookmark
 
     def next(self):
