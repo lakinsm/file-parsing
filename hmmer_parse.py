@@ -267,7 +267,7 @@ class HmmerWalk:
             if not self.stdin:
                 self.hmmer_file.close()
             #print([x for x in self.observed_counts.itervalues() if x])
-            self.calculate_false()
+            #self.calculate_false()
             #self.write_stats()  # Write the calculated dictionaries to the appropriate files (WIP)
             ## Remember to calculate the true/false negatives here
             ## Also to calculate observed aggregated values
