@@ -57,7 +57,7 @@ class HmmerWalk:
     hash-mapping of header to sequence information.  Only one line will be held in memory at a time using this method.
     The object walks along the file and, if a truthset is provided, outputs two-by-two values for accuracy.
     """
-    def __init__(self, filepath, evalue=10, truthset=None, clstr_file=None, annot_file=None):
+    def __init__(self, filepath, evalue=10, truthset=None, clstr_file=None, annot_file=None, length=None):
         """
         constructor
         :param filepath: filepath to input hmmer tblout file
@@ -91,8 +91,9 @@ class HmmerWalk:
                 data = truth.read().split('\n')
                 for line in data:
                     temp = line.split()
-                    self.truthset_counts.setdefault(temp[1], int(temp[0]))
-                    self.observed_counts.setdefault(temp[1], 0)
+                    if temp:
+                        self.truthset_counts.setdefault(temp[1], int(temp[0]))
+                        self.observed_counts.setdefault(temp[1], 0)
             self.hmm_twobytwo = {}
             with open(clstr_file, 'r') as f:
                 header_reg = re.compile(r'>(.+?)\.\.\.')
@@ -106,8 +107,8 @@ class HmmerWalk:
                             if len(clstr) is 1:
                                 clstr = []
                             else:
-                                self.clstr_members.setdefault(cluster_num, clstr)
-                                self.hmm_twobytwo.setdefault(cluster_num, [0, 0, 0, 0])  # TP, FP, FN, TN
+                                self.clstr_members.setdefault(str(cluster_num), clstr)
+                                self.hmm_twobytwo.setdefault(str(cluster_num), [0, 0, 0, 0])  # TP, FP, FN, TN
                                 clstr = []
                     else:
                         clstr.append(header_reg.findall(line)[0])
@@ -120,12 +121,13 @@ class HmmerWalk:
                 data = annot.read().split('\n')
                 for line in data:
                     temp = line.split(',')
-                    self.gene_annots.setdefault(temp[0], temp[1:])
-                    self.class_twobytwo.setdefault(temp[1], [0, 0, 0, 0])
-                    if temp[2]:
-                        self.mech_twobytwo.setdefault(temp[2], [0, 0, 0, 0])
-                    if temp[3]:
-                        self.group_twobytwo.setdefault(temp[3], [0, 0, 0, 0])
+                    if temp[0]:
+                        self.gene_annots.setdefault(temp[0], temp[1:])
+                        self.class_twobytwo.setdefault(temp[1], [0, 0, 0, 0])
+                        if temp[2]:
+                            self.mech_twobytwo.setdefault(temp[2], [0, 0, 0, 0])
+                        if temp[3]:
+                            self.group_twobytwo.setdefault(temp[3], [0, 0, 0, 0])
             self.hmm_annots = {}
             for key, values in self.clstr_members.iteritems():
                 classes, mechs, groups = zip(*[self.gene_annots[x] for x in values])
@@ -153,6 +155,14 @@ class HmmerWalk:
                         self.group_counts[gene_group] += value
                     except KeyError:
                         self.group_counts.setdefault(gene_group, value)
+            self.hmm_lengths = {}
+            with open(length, 'r') as hmm_length:
+                data = hmm_length.read().split('\n')[1:]
+                for line in data:
+                    line = line.split()
+                    if line:
+                        self.hmm_lengths.setdefault(line[0], int(line[1]))
+
 
 
     def __iter__(self):
@@ -226,7 +236,7 @@ class HmmerWalk:
                             self.observed_counts[temp[0]] += 1
                         except KeyError:
                             self.observed_counts.setdefault(temp[0], 1)
-                    return temp[1], temp[2], temp[3], temp[9]
+                    return temp[2], self.hmm_lengths[temp[2]], temp[4], temp[5], temp[11]  # name, len, start, stop, str
         self.hmmer_file.close()  # catch all in case this line is reached
         assert False, "Should not reach this line"
 
@@ -249,12 +259,13 @@ class HmmerWalk:
 ## ArgParse ##
 ##############
 parser = argparse.ArgumentParser('amr_skewness.py')
-parser.add_argument('input', type=str, help='File path to AMR SAM file, or "-" for stdin')
+parser.add_argument('input', type=str, help='File path to HMMer tblout file, or "-" for stdin')
 parser.add_argument('outputfile', type=str, help='File path to desired output file (.csv format)')
 parser.add_argument('graph_dir', type=str, help='Path to output directory for graphs')
 parser.add_argument('--truthset', nargs='?', default=None, help='Path to file containing uniq -c style truth set counts')
 parser.add_argument('--clstr', nargs='?', default=None, help='Path to file containing clstr generation info')
 parser.add_argument('--annots', nargs='?', default=None, help='Path to annotation file')
+parser.add_argument('--hmm_len', nargs='?', default=None, help='Path to file containing HMM lengths')
 
 ##########
 ## Main ##
@@ -274,34 +285,39 @@ if __name__ == '__main__':
     with open(outfile, 'w') as out:
         vector_hash = {}  # This stores gene names that were referenced in the SAM file, along with their vectors
         vector_counts = {}  # This stores gene names as in the other dictionary, but stores read counts instead
-        for line in HmmerWalk(infile, 10, args.truthset, args.clstr, args.annots):
-            if len(line) is 2:
-                vector_hash[line[0]] = np.zeros(int(line[1])).astype('int')  # new entry, initialize vector
-                vector_counts[line[0]] = 0
+        for line in HmmerWalk(infile, 10, args.truthset, args.clstr, args.annots, args.hmm_len):
+            if int(line[2]) < int(line[3]):
+                start = line[2]
+                stop = line[3]
             else:
-                vector_hash[line[1]][(int(line[2])-1):(int(line[2])-1)+len(line[3])] += 1  # increment affected region
-                vector_counts[line[1]] += 1  # increment counter
-        out.write('Accession_Name,Accession_Length,Hits,Coverage,Shannon_Entropy,L2norm_Deviation,Vector\n')  # headers for outfile
-        plt.ioff()  # no interactive mode
-        plt.hold(False)  # don't keep plot
-        for key, value in vector_hash.iteritems():
-            if sum(value > 0):  # if the gene had reads aligned
-                plot_count += 1
-                sys.stdout.write("\rPlots generated: {}".format(plot_count))  # update counter for user benefit
-                sys.stdout.flush()
+                start = line[3]
+                stop = line[2]
+            try:
+                vector_hash[line[0]][(int(start)-1):(int(stop))] += 1  # increment affected region
+            except KeyError:
+                vector_hash[line[0]] = np.zeros(int(line[1])).astype('int')  # new entry, initialize vector
 
-                ## Calculate metrics
-                coverage = float(sum(value > 0)) / len(value)  # what percentage of the gene has a read aligned?
-                norm_vec = value**float(1) / sum(value)  # normalize so the vector sums to 1 (frequency)
-                max_entropy = np.ones(len(norm_vec)) / len(norm_vec)  # this is used to calculate the maximum shannon entropy for a given vector
-                shannon = np.negative(sum([x*np.log2(x) for x in norm_vec if x > 0])) / np.negative(sum([x*np.log2(x) for x in max_entropy])) # Shannon entropy
-                l2norm = 1 - ((np.sqrt(sum(norm_vec*norm_vec))*np.sqrt(len(norm_vec))) - 1) / (np.sqrt(len(norm_vec)) - 1)  # Deviation from the L2 norm unit sphere
-                out.write(",".join([key, str(len(value)), str(vector_counts[key]), str(coverage), str(shannon), str(l2norm), " ".join([str(x) for x in value])])+'\n')
-
-                ## Plot figure
-                plt.plot(value)
-                plt.xlabel('Nucleotide Position')
-                plt.ylabel('Observed Count')
-                plt.title('Coverage Plot for {}'.format(key))
-                plt.savefig(graph_dir+'/'+'{}.png'.format(key))
-                plt.close()  # make sure plot is closed
+        # out.write('Accession_Name,Accession_Length,Hits,Coverage,Shannon_Entropy,L2norm_Deviation,Vector\n')  # headers for outfile
+        # plt.ioff()  # no interactive mode
+        # plt.hold(False)  # don't keep plot
+        # for key, value in vector_hash.iteritems():
+        #     if sum(value > 0):  # if the gene had reads aligned
+        #         plot_count += 1
+        #         sys.stdout.write("\rPlots generated: {}".format(plot_count))  # update counter for user benefit
+        #         sys.stdout.flush()
+        #
+        #         ## Calculate metrics
+        #         coverage = float(sum(value > 0)) / len(value)  # what percentage of the gene has a read aligned?
+        #         norm_vec = value**float(1) / sum(value)  # normalize so the vector sums to 1 (frequency)
+        #         max_entropy = np.ones(len(norm_vec)) / len(norm_vec)  # this is used to calculate the maximum shannon entropy for a given vector
+        #         shannon = np.negative(sum([x*np.log2(x) for x in norm_vec if x > 0])) / np.negative(sum([x*np.log2(x) for x in max_entropy])) # Shannon entropy
+        #         l2norm = 1 - ((np.sqrt(sum(norm_vec*norm_vec))*np.sqrt(len(norm_vec))) - 1) / (np.sqrt(len(norm_vec)) - 1)  # Deviation from the L2 norm unit sphere
+        #         out.write(",".join([key, str(len(value)), str(vector_counts[key]), str(coverage), str(shannon), str(l2norm), " ".join([str(x) for x in value])])+'\n')
+        #
+        #         ## Plot figure
+        #         plt.plot(value)
+        #         plt.xlabel('Nucleotide Position')
+        #         plt.ylabel('Observed Count')
+        #         plt.title('Coverage Plot for {}'.format(key))
+        #         plt.savefig(graph_dir+'/'+'{}.png'.format(key))
+        #         plt.close()  # make sure plot is closed
