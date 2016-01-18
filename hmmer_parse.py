@@ -65,7 +65,7 @@ class HmmerWalk:
         :param clstr_file: optional filepath to the .clstr file from cd-hit from hmm generation step
         :param annot_file: optional filepath to the hmmer_annotation file for each gene
         :param hmm_annot: optional filepath mapping each hmm_query name (this is a number) to its annotations
-        :return:
+        :return: name, len, start, stop, str of filepath
         """
         if os.path.exists(filepath):  # if file is a file, read from the file
             self.hmmer_file = str(filepath)
@@ -256,8 +256,8 @@ class HmmerWalk:
         self.hmmer_file.close()  # catch all in case this line is reached
         assert False, 'Should not reach this line'
 
-    #def calculate_false(self):
-
+    def calculate_false(self):
+        ## Bookmark
 
     def next(self):
         if not self.stdin and type(self.hmmer_file) is str:  # only open file here if hmmer_file is a str and not fileIO
@@ -267,7 +267,7 @@ class HmmerWalk:
             if not self.stdin:
                 self.hmmer_file.close()
             #print([x for x in self.observed_counts.itervalues() if x])
-            #self.calculate_false()
+            self.calculate_false()
             #self.write_stats()  # Write the calculated dictionaries to the appropriate files (WIP)
             ## Remember to calculate the true/false negatives here
             ## Also to calculate observed aggregated values
