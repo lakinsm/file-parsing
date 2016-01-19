@@ -266,6 +266,13 @@ class HmmerWalk:
         if not value:  # close file on EOF
             if not self.stdin:
                 self.hmmer_file.close()
+            sum = 0
+            for key, value in self.truthset_counts.iteritems():
+                if key in self.gene_annots:
+                    print key, value
+                    sum += value
+            print sum
+
             #print([x for x in self.observed_counts.itervalues() if x])
             #self.calculate_false()
             #self.write_stats()  # Write the calculated dictionaries to the appropriate files (WIP)
