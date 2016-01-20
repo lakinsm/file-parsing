@@ -58,7 +58,7 @@ class HmmerWalk:
     """
     def __init__(self, filepath, length, evalue=10, diff=0, truthset=None, clstr_file=None, annot_file=None,):
         """
-        constructor
+        Constructor.  This is a hellish nightmare of an __init__ function.  All of sound mind, turn back now.
         :param filepath: filepath to input hmmer tblout file
         :param evalue: Evalue threshold below which to keep a hit
         :param truthset: optional filepath to counts from each unique truth accession (format is output of uniq -c)
@@ -77,13 +77,13 @@ class HmmerWalk:
         self.reads_mapping = 0
         self.reads_total = 0
         self.ethreshold = float(evalue)
-        self.observed_counts = {}
-        self.observed_group = {}
-        self.observed_mech = {}
-        self.observed_class = {}
-        self.clstr_members = {}
+        self.observed_counts = {}  # Observed counts for each gene
+        self.observed_group = {}  # Observed counts for each group, aggregated values
+        self.observed_mech = {}  # Observed counts for each mechanism, aggregated values
+        self.observed_class = {}  # Observed counts for each class, aggregated values
+        self.clstr_members = {}  # Mapping of hmm # -> genes used to build that HMM
         self.truthset = False
-        self.hmm_lengths = {}
+        self.hmm_lengths = {}  # Length of each hmm, hmm # -> length
         with open(length, 'r') as hmm_length:
             data = hmm_length.read().split('\n')[1:]
             for line in data:
@@ -94,8 +94,8 @@ class HmmerWalk:
             if not clstr_file or not annot_file:
                 raise ValueError("If truthset is provided, all non-default parameters must be defined")
             self.truthset = True
-            self.truthset_counts = {}
-            self.off_target_hits = {}
+            self.truthset_counts = {}  # True counts for each gene
+            self.off_target_hits = {}  # If a hit doesn't map to its proper (truthset) or any (normal) HMM, put it here
             with open(truthset, 'r') as truth:
                 data = truth.read().split('\n')
                 for line in data:
@@ -103,11 +103,11 @@ class HmmerWalk:
                     if temp:
                         self.truthset_counts.setdefault(temp[1], int(temp[0]))
                         self.observed_counts.setdefault(temp[1], 0)
-            self.hmm_twobytwo = {}
+            self.hmm_twobytwo = {}  # HMM matrix for ROC generation
             with open(clstr_file, 'r') as f:
                 header_reg = re.compile(r'>(.+?)\.\.\.')
                 line = f.readline()
-                cluster_num = -2
+                cluster_num = -1
                 clstr = []
                 while line:
                     if line[0] is ">":
@@ -122,10 +122,12 @@ class HmmerWalk:
                     else:
                         clstr.append(header_reg.findall(line)[0])
                     line = f.readline()
-            self.group_twobytwo = {}
-            self.mech_twobytwo = {}
-            self.class_twobytwo = {}
-            self.gene_annots = {}
+            # for key, value in sorted(self.clstr_members.iteritems()):
+            #     print key, value
+            self.group_twobytwo = {}  # Group matrix for ROC generation
+            self.mech_twobytwo = {}  # Mechanism matrix for ROC generation
+            self.class_twobytwo = {}  # Class matrix for ROC generation
+            self.gene_annots = {}  # Mapping from gene name -> annotations
             with open(annot_file, 'r') as annot:
                 data = annot.read().split('\n')
                 for line in data:
@@ -137,16 +139,16 @@ class HmmerWalk:
                             self.mech_twobytwo.setdefault(temp[2], [0, 0, 0, 0])
                         if temp[3]:
                             self.group_twobytwo.setdefault(temp[3], [0, 0, 0, 0])
-            self.hmm_annots = {}
+            self.hmm_annots = {}  # HMM annotation mapping from key (hmm #) -> annotations
             for key, values in self.clstr_members.iteritems():
                 classes, mechs, groups = zip(*[self.gene_annots[x] for x in values])
                 classes = [x for x in classes if x]
                 mechs = [x for x in mechs if x]
                 groups = [x for x in groups if x]
                 self.hmm_annots.setdefault(key, ['|'.join(set(classes)), '|'.join(set(mechs)), '|'.join(set(groups))])
-            self.class_counts = {}
-            self.mech_counts = {}
-            self.group_counts = {}
+            self.class_counts = {}  # True counts for each class
+            self.mech_counts = {}  # True counts for each mechanism
+            self.group_counts = {}  # True counts for each group
             for key, value in self.truthset_counts.iteritems():
                 if key in self.gene_annots:
                     try:
@@ -164,6 +166,35 @@ class HmmerWalk:
                         self.group_counts[gene_group] += value
                     except KeyError:
                         self.group_counts.setdefault(gene_group, value)
+            self.hmm_truth = {}  # True counts for each HMM
+            self.class_truth = {}  # True counts for each class
+            self.mech_truth = {}  # True counts for each mechanism
+            self.group_truth = {}  # True counts for each group
+            for key, values in self.clstr_members.iteritems():
+                total = sum([int(self.truthset_counts[x]) for x in values if x in self.truthset_counts])
+                self.hmm_truth.setdefault(key, total)
+            for key, value in self.truthset_counts.iteritems():
+                if key in self.gene_annots:
+                    if self.gene_annots[key][0]:
+                        class_entry = self.gene_annots[key][0]
+                        try:
+                            self.class_truth[class_entry] += value
+                        except KeyError:
+                            self.class_truth.setdefault(class_entry, value)
+                        print class_entry
+                    if self.gene_annots[key][1]:
+                        mech_entry = self.gene_annots[key][1]
+                        try:
+                            self.mech_truth[mech_entry] += value
+                        except KeyError:
+                            self.mech_truth.setdefault(mech_entry, value)
+                    if self.gene_annots[key][2]:
+                        group_entry = self.gene_annots[key][2]
+                        try:
+                            self.group_truth[group_entry] += value
+                        except KeyError:
+                            self.group_truth.setdefault(group_entry, value)
+
 
     def __iter__(self):
         return self
@@ -256,8 +287,23 @@ class HmmerWalk:
         self.hmmer_file.close()  # catch all in case this line is reached
         assert False, 'Should not reach this line'
 
-    #def calculate_false(self):
-        ## Bookmark
+    def calculate_false(self):
+        for key, values in self.hmm_twobytwo.iteritems():
+            if key in self.hmm_truth:
+                values[2] = int(self.hmm_truth[key]) - values[0]
+                values[3] = sum(self.truthset_counts.itervalues()) - sum(values)
+        for key, values in self.class_twobytwo.iteritems():
+            if key in self.class_truth:
+                values[2] = int(self.class_truth[key]) - values[0]
+                values[3] = sum(self.truthset_counts.itervalues()) - sum(values)
+        for key, values in self.mech_twobytwo.iteritems():
+            if key in self.mech_truth:
+                values[2] = int(self.mech_truth[key]) - values[0]
+                values[3] = sum(self.truthset_counts.itervalues()) - sum(values)
+        for key, values in self.group_twobytwo.iteritems():
+            if key in self.group_truth:
+                values[2] = int(self.group_truth[key]) - values[0]
+                values[3] = sum(self.truthset_counts.itervalues()) - sum(values)
 
     def next(self):
         if not self.stdin and type(self.hmmer_file) is str:  # only open file here if hmmer_file is a str and not fileIO
@@ -266,15 +312,17 @@ class HmmerWalk:
         if not value:  # close file on EOF
             if not self.stdin:
                 self.hmmer_file.close()
-            sum = 0
-            for key, value in self.truthset_counts.iteritems():
-                if key in self.gene_annots:
-                    print key, value
-                    sum += value
-            print sum
+            # sum = 0
+            # for key, value in self.truthset_counts.iteritems():
+            #     if key in self.gene_annots:
+            #         print key, value
+            #         sum += value
+            # print sum
 
             #print([x for x in self.observed_counts.itervalues() if x])
-            #self.calculate_false()
+            self.calculate_false()
+            for key, value in self.class_twobytwo.iteritems():
+                print key, value
             #self.write_stats()  # Write the calculated dictionaries to the appropriate files (WIP)
             ## Remember to calculate the true/false negatives here
             ## Also to calculate observed aggregated values
@@ -329,27 +377,27 @@ if __name__ == '__main__':
             except KeyError:
                 vector_hash[line[0]] = np.zeros(int(line[1])).astype('int')  # new entry, initialize vector
 
-        out.write('Accession_Name,Accession_Length,Coverage,Shannon_Entropy,L2norm_Deviation,Vector\n')  # headers for outfile
-        plt.ioff()  # no interactive mode
-        plt.hold(False)  # don't keep plot
-        for key, value in vector_hash.iteritems():
-            if sum(value > 0):  # if the gene had reads aligned
-                plot_count += 1
-                sys.stdout.write("\rPlots generated: {}".format(plot_count))  # update counter for user benefit
-                sys.stdout.flush()
-
-                ## Calculate metrics
-                coverage = float(sum(value > 0)) / len(value)  # what percentage of the gene has a read aligned?
-                norm_vec = value**float(1) / sum(value)  # normalize so the vector sums to 1 (frequency)
-                max_entropy = np.ones(len(norm_vec)) / len(norm_vec)  # this is used to calculate the maximum shannon entropy for a given vector
-                shannon = np.negative(sum([x*np.log2(x) for x in norm_vec if x > 0])) / np.negative(sum([x*np.log2(x) for x in max_entropy])) # Shannon entropy
-                l2norm = 1 - ((np.sqrt(sum(norm_vec*norm_vec))*np.sqrt(len(norm_vec))) - 1) / (np.sqrt(len(norm_vec)) - 1)  # Deviation from the L2 norm unit sphere
-                out.write(",".join([key, str(len(value)), str(coverage), str(shannon), str(l2norm), " ".join([str(x) for x in value])])+'\n')
-
-                ## Plot figure
-                plt.plot(value)
-                plt.xlabel('Nucleotide Position')
-                plt.ylabel('Observed Count')
-                plt.title('Coverage Plot for {}'.format(key))
-                plt.savefig(graph_dir+'/'+'{}.png'.format(key))
-                plt.close()  # make sure plot is closed
+        # out.write('Accession_Name,Accession_Length,Coverage,Shannon_Entropy,L2norm_Deviation,Vector\n')  # headers for outfile
+        # plt.ioff()  # no interactive mode
+        # plt.hold(False)  # don't keep plot
+        # for key, value in vector_hash.iteritems():
+        #     if sum(value > 0):  # if the gene had reads aligned
+        #         plot_count += 1
+        #         sys.stdout.write("\rPlots generated: {}".format(plot_count))  # update counter for user benefit
+        #         sys.stdout.flush()
+        #
+        #         ## Calculate metrics
+        #         coverage = float(sum(value > 0)) / len(value)  # what percentage of the gene has a read aligned?
+        #         norm_vec = value**float(1) / sum(value)  # normalize so the vector sums to 1 (frequency)
+        #         max_entropy = np.ones(len(norm_vec)) / len(norm_vec)  # this is used to calculate the maximum shannon entropy for a given vector
+        #         shannon = np.negative(sum([x*np.log2(x) for x in norm_vec if x > 0])) / np.negative(sum([x*np.log2(x) for x in max_entropy])) # Shannon entropy
+        #         l2norm = 1 - ((np.sqrt(sum(norm_vec*norm_vec))*np.sqrt(len(norm_vec))) - 1) / (np.sqrt(len(norm_vec)) - 1)  # Deviation from the L2 norm unit sphere
+        #         out.write(",".join([key, str(len(value)), str(coverage), str(shannon), str(l2norm), " ".join([str(x) for x in value])])+'\n')
+        #
+        #         ## Plot figure
+        #         plt.plot(value)
+        #         plt.xlabel('Nucleotide Position')
+        #         plt.ylabel('Observed Count')
+        #         plt.title('Coverage Plot for {}'.format(key))
+        #         plt.savefig(graph_dir+'/'+'{}.png'.format(key))
+        #         plt.close()  # make sure plot is closed
