@@ -262,22 +262,6 @@ class HmmerWalk:
                                 self.class_twobytwo[gene_class][0] += 1
                             elif gene_class and gene_class not in hmm_classes:
                                 self.class_twobytwo[gene_class][1] += 1
-                        ## TRUTHSET ENABLED: Increment the hits on each gene
-                        hmm_classes = hmm_annot[0].split('|')
-                        if temp[0] in self.gene_annots:
-                            gene_class = self.gene_annots[temp[0]][0]
-                            if gene_class and gene_class in hmm_classes:
-                                self.class_twobytwo[gene_class][0] += 1
-                            elif gene_class and gene_class not in hmm_classes:
-                                self.class_twobytwo[gene_class][1] += 1
-                        ## TRUTHSET ENABLED: Add each hit on HMM to gene hash
-                        hmm_classes = hmm_annot[0].split('|')
-                        if temp[0] in self.gene_annots:
-                            gene_class = self.gene_annots[temp[0]][0]
-                            if gene_class and gene_class in hmm_classes:
-                                self.class_twobytwo[gene_class][0] += 1
-                            elif gene_class and gene_class not in hmm_classes:
-                                self.class_twobytwo[gene_class][1] += 1
                     else:
                         try:
                             self.observed_counts[temp[0]] += 1
