@@ -210,6 +210,9 @@ class HmmerTime:
                     sys.stdout.write("\rHits processed: {}".format(self.reads_total))
                     sys.stdout.flush()
                 temp = hmmer_line.split()
+                read_name = temp[0]
+                temp[0] = '|'.join(temp[0].split('|')[:-1])
+
                 if float(temp[12]) < float(self.ethreshold):
                     self.reads_mapping += 1
                     ## Basic observation increment rules
@@ -218,14 +221,12 @@ class HmmerTime:
                             self.observed_counts[temp[0]] += 1
                         except KeyError:
                             try:
-                                self.off_target_hits[temp[9]] += 1
+                                self.off_target_hits[temp[0]] += 1
                             except KeyError:
                                 self.off_target_hits.setdefault(temp[0], 1)
                         ## TRUTHSET ENABLED: What category of HMM-level two-by-two does this hit fall under?
                         ## Can only calculate TP/FP here; the others are done at the end
                         if temp[0] in self.clstr_members[temp[2]]:
-                            if temp[2] == '989':
-                                print temp[0]
                             self.hmm_twobytwo[temp[2]][0] += 1
                         else:
                             self.hmm_twobytwo[temp[2]][1] += 1
@@ -259,22 +260,22 @@ class HmmerTime:
                                 self.class_twobytwo[gene_class][1] += 1
                         ## TRUTHSET ENABLED: Keep track of whether a gene hits across multiple HMMs
                         try:
-                            self.gene_multihits[temp[0]][temp[2]] += 1
+                            self.gene_multihits[read_name][temp[2]] += 1
                         except (TypeError, KeyError):
-                            self.gene_multihits.setdefault(temp[0], {temp[2]: 1})
+                            self.gene_multihits.setdefault(read_name, {temp[2]: 1})
                     else:
                         try:
-                            self.observed_counts[temp[0]] += 1
+                            self.observed_counts[read_name] += 1
                         except KeyError:
-                            self.observed_counts.setdefault(temp[0], 1)
+                            self.observed_counts.setdefault(read_name, 1)
                         try:
-                            self.gene_multihits[temp[0]][temp[2]] += 1
+                            self.gene_multihits[read_name][temp[2]] += 1
                         except (TypeError, KeyError):
-                            self.gene_multihits.setdefault(temp[0], {temp[2]: 1})
+                            self.gene_multihits.setdefault(read_name, {temp[2]: 1})
                         try:
-                            self.gene_multihit_evalues[temp[0]][temp[2]] += (temp[12], )
+                            self.gene_multihit_evalues[read_name][temp[2]] += (temp[12], )
                         except (TypeError, KeyError):
-                            self.gene_multihit_evalues.setdefault(temp[0], {temp[2]: (temp[12], )})
+                            self.gene_multihit_evalues.setdefault(read_name, {temp[2]: (temp[12], )})
                     return temp[2], self.hmm_lengths[temp[2]], temp[4], temp[5], temp[11]  # name, len, start, stop, str
         self.hmmer_file.close()  # catch all in case this line is reached
         assert False, 'Should not reach this line'
@@ -289,9 +290,19 @@ class HmmerTime:
         """
         for key, subdict in self.gene_multihits.iteritems():
             if subdict:
-                multiclass = {self.hmm_annots[k][0]:v for k, v in subdict.iteritems()}
-                multimech = {self.hmm_annots[k][1]:v for k, v in subdict.iteritems()}
-                multigroup = {self.hmm_annots[k][2]:v for k, v in subdict.iteritems()}
+                multiclass = {}
+                multimech = {}
+                multigroup = {}
+                for k, v in subdict.iteritems():
+                    class_annot = self.hmm_annots[k][0].split('|')
+                    for entry in class_annot:
+                        multiclass.setdefault(entry, v)
+                    mech_annot = self.hmm_annots[k][1].split('|')
+                    for entry in mech_annot:
+                        multimech.setdefault(entry, v)
+                    group_annot = self.hmm_annots[k][2].split('|')
+                    for entry in group_annot:
+                        multigroup.setdefault(entry, v)
                 ## Correct for HMM counts
                 if len(subdict) > 1:
                     for nkey, nvalue in subdict.iteritems():
@@ -304,7 +315,7 @@ class HmmerTime:
                 ## Correct for Class counts
                 if len(multiclass) > 1:
                     for nkey, nvalue in multiclass.iteritems():
-                        if self.gene_annots[key][0]:
+                        if key in self.gene_annots and self.gene_annots[key][0] and nkey:
                             if nkey is self.gene_annots[key][0]:
                                 self.class_twobytwo[nkey][0] -= nvalue
                                 self.class_twobytwo[nkey][0] += float(nvalue) / sum(multiclass.values())
@@ -314,7 +325,7 @@ class HmmerTime:
                 ## Correct for Mech counts
                 if len(multimech) > 1:
                     for nkey, nvalue in multimech.iteritems():
-                        if self.gene_annots[key][1]:
+                        if key in self.gene_annots and self.gene_annots[key][1] and nkey:
                             if nkey is self.gene_annots[key][1]:
                                 self.mech_twobytwo[nkey][0] -= nvalue
                                 self.mech_twobytwo[nkey][0] += float(nvalue) / sum(multimech.values())
@@ -324,7 +335,7 @@ class HmmerTime:
                 ## Correct for Group counts
                 if len(multigroup) > 1:
                     for nkey, nvalue in multigroup.iteritems():
-                        if self.gene_annots[key][2]:
+                        if key in self.gene_annots and self.gene_annots[key][2] and nkey:
                             if nkey is self.gene_annots[key][2]:
                                 self.group_twobytwo[nkey][0] -= nvalue
                                 self.group_twobytwo[nkey][0] += float(nvalue) / sum(multigroup.values())
@@ -332,7 +343,7 @@ class HmmerTime:
                                 self.group_twobytwo[nkey][1] -= nvalue
                                 self.group_twobytwo[nkey][1] += float(nvalue) / sum(multigroup.values())
                 ## Now correct for within-HMM multihits by reducing any multiple read hits to a single hit
-                elif len(subdict) == 1:
+                if len(subdict) == 1:
                     for nkey, nvalue in subdict.iteritems():
                         if key in self.clstr_members[nkey]:
                             self.hmm_twobytwo[nkey][0] -= nvalue
@@ -343,7 +354,7 @@ class HmmerTime:
                 ## Correct for Class counts
                 if len(multiclass) == 1:
                     for nkey, nvalue in multiclass.iteritems():
-                        if self.gene_annots[key][0]:
+                        if key in self.gene_annots and self.gene_annots[key][0] and nkey:
                             if nkey is self.gene_annots[key][0]:
                                 self.class_twobytwo[nkey][0] -= nvalue
                                 self.class_twobytwo[nkey][0] += 1
@@ -353,7 +364,7 @@ class HmmerTime:
                 ## Correct for Mech counts
                 if len(multimech) == 1:
                     for nkey, nvalue in multimech.iteritems():
-                        if self.gene_annots[key][1]:
+                        if key in self.gene_annots and self.gene_annots[key][1] and nkey:
                             if nkey is self.gene_annots[key][1]:
                                 self.mech_twobytwo[nkey][0] -= nvalue
                                 self.mech_twobytwo[nkey][0] += 1
@@ -363,7 +374,7 @@ class HmmerTime:
                 ## Correct for Group counts
                 if len(multigroup) == 1:
                     for nkey, nvalue in multigroup.iteritems():
-                        if self.gene_annots[key][2]:
+                        if key in self.gene_annots and self.gene_annots[key][2] and nkey:
                             if nkey is self.gene_annots[key][2]:
                                 self.group_twobytwo[nkey][0] -= nvalue
                                 self.group_twobytwo[nkey][0] += 1
@@ -398,7 +409,7 @@ class HmmerTime:
                 self.hmmer_file.close()
             self.correct_multihit()
             self.calculate_false()
-            for key, value in self.class_twobytwo:
+            for key, value in self.class_twobytwo.iteritems():
                 print key, value
             #self.write_stats()  # Write the calculated dictionaries to the appropriate files (WIP)
             ## Remember to calculate the true/false negatives here
