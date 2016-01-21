@@ -48,14 +48,15 @@ plot_count = 0
 #############
 ## Methods ##
 #############
-class HmmerWalk:
+class HmmerTime:
     """This object takes as input a HMMer tblout file path and constructs an iterable that outputs
     hash-mapping of header to sequence information.  Only one line will be held in memory at a time using this method.
     The object walks along the file and, if a truthset is provided, outputs two-by-two values for accuracy.
     """
     def __init__(self, filepath, length, evalue=10, diff=0, truthset=None, clstr_file=None, annot_file=None,):
         """
-        Constructor.  This is a hellish nightmare of an __init__ function.  All of sound mind, turn back now.
+        Constructor; can't touch this.  This is a hellish nightmare of an __init__ function.
+        All of sound mind, turn back now.
         :param filepath: filepath to input hmmer tblout file
         :param evalue: Evalue threshold below which to keep a hit
         :param truthset: optional filepath to counts from each unique truth accession (format is output of uniq -c)
@@ -441,7 +442,7 @@ if __name__ == '__main__':
     with open(outfile, 'w') as out:
         vector_hash = {}  # This stores gene names that were referenced in the SAM file, along with their vectors
         vector_counts = {}  # This stores gene names as in the other dictionary, but stores read counts instead
-        for line in HmmerWalk(infile, args.hmm_len, args.evalue, args.diff, args.truthset, args.clstr, args.annots):
+        for line in HmmerTime(infile, args.hmm_len, args.evalue, args.diff, args.truthset, args.clstr, args.annots):
             if int(line[2]) < int(line[3]):
                 start = line[2]
                 stop = line[3]
