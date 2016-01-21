@@ -3,6 +3,7 @@
 """Parse a HMMer tblout file line by line, storing relevant information.  Output a vector for each gene that allows
 for subsequent calculation of coverage and skewness of the read distribution for each HMM.  If a truthset is provided,
 calculate two-by-two accuracies. Optionally output a ROC graph and statistics flat file.
+Note: Reads in the original fasta/fastq file MUST have a unique header for this to work properly.
 """
 
 # Header values for reference:
@@ -23,10 +24,6 @@ calculate two-by-two accuracies. Optionally output a ROC graph and statistics fl
 #15 bias
 #16 description of target (multi-value)
 
-
-## To do list:
-# splitting of multi-hits (need to check region?)
-# Class, mech, gene level two-by-twos
 
 #############
 ## Imports ##
@@ -190,12 +187,6 @@ class HmmerWalk:
                             self.group_truth[group_entry] += value
                         except KeyError:
                             self.group_truth.setdefault(group_entry, value)
-            ## Initialize a dictionary of gene names with None values; this is done here to save some time later, but
-            ## ultimately this dictionary stores another (nested) dictionary of the names and counts of each HMM
-            ## that each gene hits.  This way, we can decide
-            self.gene_multihits = {key: None for key in self.gene_annots.iterkeys()}
-            self.gene_multihit_evalues = {key: None for key in self.gene_multihits.iterkeys()}
-            print self.gene_multihits
 
     def __iter__(self):
         return self
@@ -232,6 +223,8 @@ class HmmerWalk:
                         ## TRUTHSET ENABLED: What category of HMM-level two-by-two does this hit fall under?
                         ## Can only calculate TP/FP here; the others are done at the end
                         if temp[0] in self.clstr_members[temp[2]]:
+                            if temp[2] == '989':
+                                print temp[0]
                             self.hmm_twobytwo[temp[2]][0] += 1
                         else:
                             self.hmm_twobytwo[temp[2]][1] += 1
@@ -263,19 +256,119 @@ class HmmerWalk:
                                 self.class_twobytwo[gene_class][0] += 1
                             elif gene_class and gene_class not in hmm_classes:
                                 self.class_twobytwo[gene_class][1] += 1
-                        ## TRUTHSET ENABLED: Keep track of whether a gene hits across multiple
+                        ## TRUTHSET ENABLED: Keep track of whether a gene hits across multiple HMMs
+                        try:
+                            self.gene_multihits[temp[0]][temp[2]] += 1
+                        except (TypeError, KeyError):
+                            self.gene_multihits.setdefault(temp[0], {temp[2]: 1})
                     else:
                         try:
                             self.observed_counts[temp[0]] += 1
                         except KeyError:
                             self.observed_counts.setdefault(temp[0], 1)
                         try:
-                            self.gene_multihits[temp[0]] + (temp[2], )
-                        except KeyError:
-                            self.gene_multihits.setdefault(temp[0], (temp[2], ))
+                            self.gene_multihits[temp[0]][temp[2]] += 1
+                        except (TypeError, KeyError):
+                            self.gene_multihits.setdefault(temp[0], {temp[2]: 1})
+                        try:
+                            self.gene_multihit_evalues[temp[0]][temp[2]] += (temp[12], )
+                        except (TypeError, KeyError):
+                            self.gene_multihit_evalues.setdefault(temp[0], {temp[2]: (temp[12], )})
                     return temp[2], self.hmm_lengths[temp[2]], temp[4], temp[5], temp[11]  # name, len, start, stop, str
         self.hmmer_file.close()  # catch all in case this line is reached
         assert False, 'Should not reach this line'
+
+    def correct_multihit(self):
+        """
+        For our purposes, reads need to maintain a one-to-one mapping with hits counted.  Therefore, we both need to
+        correct for hits across multiple HMMs due to homology and also for different motifs within the same read
+        hitting multiple times within the same HMM.  This correction will be optional in the production version of
+        the script.  Note that for this to work, reads must have a unique header in the original fastq/fasta file.
+        :return: void
+        """
+        for key, subdict in self.gene_multihits.iteritems():
+            if subdict:
+                multiclass = {self.hmm_annots[k][0]:v for k, v in subdict.iteritems()}
+                multimech = {self.hmm_annots[k][1]:v for k, v in subdict.iteritems()}
+                multigroup = {self.hmm_annots[k][2]:v for k, v in subdict.iteritems()}
+                ## Correct for HMM counts
+                if len(subdict) > 1:
+                    for nkey, nvalue in subdict.iteritems():
+                        if key in self.clstr_members[nkey]:
+                            self.hmm_twobytwo[nkey][0] -= nvalue
+                            self.hmm_twobytwo[nkey][0] += float(nvalue) / sum(subdict.values())
+                        else:
+                            self.hmm_twobytwo[nkey][1] -= nvalue
+                            self.hmm_twobytwo[nkey][1] += float(nvalue) / sum(subdict.values())
+                ## Correct for Class counts
+                if len(multiclass) > 1:
+                    for nkey, nvalue in multiclass.iteritems():
+                        if self.gene_annots[key][0]:
+                            if nkey is self.gene_annots[key][0]:
+                                self.class_twobytwo[nkey][0] -= nvalue
+                                self.class_twobytwo[nkey][0] += float(nvalue) / sum(multiclass.values())
+                            else:
+                                self.class_twobytwo[nkey][1] -= nvalue
+                                self.class_twobytwo[nkey][1] += float(nvalue) / sum(multiclass.values())
+                ## Correct for Mech counts
+                if len(multimech) > 1:
+                    for nkey, nvalue in multimech.iteritems():
+                        if self.gene_annots[key][1]:
+                            if nkey is self.gene_annots[key][1]:
+                                self.mech_twobytwo[nkey][0] -= nvalue
+                                self.mech_twobytwo[nkey][0] += float(nvalue) / sum(multimech.values())
+                            else:
+                                self.mech_twobytwo[nkey][1] -= nvalue
+                                self.mech_twobytwo[nkey][1] += float(nvalue) / sum(multimech.values())
+                ## Correct for Group counts
+                if len(multigroup) > 1:
+                    for nkey, nvalue in multigroup.iteritems():
+                        if self.gene_annots[key][2]:
+                            if nkey is self.gene_annots[key][2]:
+                                self.group_twobytwo[nkey][0] -= nvalue
+                                self.group_twobytwo[nkey][0] += float(nvalue) / sum(multigroup.values())
+                            else:
+                                self.group_twobytwo[nkey][1] -= nvalue
+                                self.group_twobytwo[nkey][1] += float(nvalue) / sum(multigroup.values())
+                ## Now correct for within-HMM multihits by reducing any multiple read hits to a single hit
+                elif len(subdict) == 1:
+                    for nkey, nvalue in subdict.iteritems():
+                        if key in self.clstr_members[nkey]:
+                            self.hmm_twobytwo[nkey][0] -= nvalue
+                            self.hmm_twobytwo[nkey][0] += 1
+                        else:
+                            self.hmm_twobytwo[nkey][1] -= nvalue
+                            self.hmm_twobytwo[nkey][1] += 1
+                ## Correct for Class counts
+                if len(multiclass) == 1:
+                    for nkey, nvalue in multiclass.iteritems():
+                        if self.gene_annots[key][0]:
+                            if nkey is self.gene_annots[key][0]:
+                                self.class_twobytwo[nkey][0] -= nvalue
+                                self.class_twobytwo[nkey][0] += 1
+                            else:
+                                self.class_twobytwo[nkey][1] -= nvalue
+                                self.class_twobytwo[nkey][1] += 1
+                ## Correct for Mech counts
+                if len(multimech) == 1:
+                    for nkey, nvalue in multimech.iteritems():
+                        if self.gene_annots[key][1]:
+                            if nkey is self.gene_annots[key][1]:
+                                self.mech_twobytwo[nkey][0] -= nvalue
+                                self.mech_twobytwo[nkey][0] += 1
+                            else:
+                                self.mech_twobytwo[nkey][1] -= nvalue
+                                self.mech_twobytwo[nkey][1] += 1
+                ## Correct for Group counts
+                if len(multigroup) == 1:
+                    for nkey, nvalue in multigroup.iteritems():
+                        if self.gene_annots[key][2]:
+                            if nkey is self.gene_annots[key][2]:
+                                self.group_twobytwo[nkey][0] -= nvalue
+                                self.group_twobytwo[nkey][0] += 1
+                            else:
+                                self.group_twobytwo[nkey][1] -= nvalue
+                                self.group_twobytwo[nkey][1] += 1
 
     def calculate_false(self):
         for key, values in self.hmm_twobytwo.iteritems():
@@ -302,17 +395,10 @@ class HmmerWalk:
         if not value:  # close file on EOF
             if not self.stdin:
                 self.hmmer_file.close()
-            # sum = 0
-            # for key, value in self.truthset_counts.iteritems():
-            #     if key in self.gene_annots:
-            #         print key, value
-            #         sum += value
-            # print sum
-
-            #print([x for x in self.observed_counts.itervalues() if x])
+            self.correct_multihit()
             self.calculate_false()
-            # for key, value in self.hmm_twobytwo.iteritems():
-            #     print key, value
+            for key, value in self.class_twobytwo:
+                print key, value
             #self.write_stats()  # Write the calculated dictionaries to the appropriate files (WIP)
             ## Remember to calculate the true/false negatives here
             ## Also to calculate observed aggregated values
