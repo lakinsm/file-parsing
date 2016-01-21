@@ -8,6 +8,7 @@ parser.add_argument('fasta_file', type=str, help="Input FASTA File")
 parser.add_argument('output', type=str, help="Output FASTA File")
 parser.add_argument('-s', '--subset_file', type=str, help="Optional file of headers for subset")
 parser.add_argument('-q', '--fastq', action='store_true', help='Is the file fastq?')
+parser.add_argument('-u', '--unique', action = 'store_true', help='Optional flag to make read names unique')
 
 args = parser.parse_args()
 
@@ -69,17 +70,26 @@ if args.subset_file:
                 out.write(">"+header+"\n"+seq+"\n")
 else:
     with open(args.output, 'w') as out:
+        counter = 1
         if args.fastq:
             for header, seq, line3, line4 in data:
                 if len(seq) > 124:
                     seq = seq[0:124]
                 if len(line4) > 124:
                     line4 = line4[0:124]
-                out.write("@"+header+'\n'+seq+'\n'+line3+'\n'+line4+'\n')
+                if args.unique:
+                    out.write("@"+header+'|'+str(counter)+'\n'+seq+'\n'+line3+'\n'+line4+'\n')
+                else:
+                    out.write("@"+header+'\n'+seq+'\n'+line3+'\n'+line4+'\n')
+                counter += 1
         else:
             for header,seq in data:
                 if len(seq) > 124:
                     seq = seq[0:124]
-                out.write(">"+header+"\n"+seq+"\n")
+                if args.unique:
+                    out.write(">"+header+'|'+str(counter)+"\n"+seq+"\n")
+                else:
+                    out.write(">"+header+"\n"+seq+"\n")
+                counter += 1
 
 
