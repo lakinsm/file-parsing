@@ -84,6 +84,8 @@ class HmmerWalk:
         self.clstr_members = {}  # Mapping of hmm # -> genes used to build that HMM
         self.truthset = False
         self.hmm_lengths = {}  # Length of each hmm, hmm # -> length
+        self.gene_multihits = {}  # Will store HMM hits for each gene
+        self.gene_multihit_evalues = {}  # Will store evalues for each hit
         with open(length, 'r') as hmm_length:
             data = hmm_length.read().split('\n')[1:]
             for line in data:
@@ -91,12 +93,24 @@ class HmmerWalk:
                 if line:
                     self.hmm_lengths.setdefault(line[0], int(line[1]))
         if truthset:
+            ## This section is complicated.  To calculate two-by-twos, we need to keep track of several things:
+            ## 1. The true number of reads that map to a given gene from the test set
+            ## 2. The number of reads (gene fragments) mapping to each HMM and which ones they are (their gene header)
+            ## 3. The hierarchy of annotations for each gene (Class -> Mechanism -> Group -> HMM)
+            ## 4. The cluster membership of each HMM (which genes truly belong to each HMM?)
+            ## 5. The HMM membership of each gene (to which HMMs did the gene's hits map?)
+            ## 6. If there are more than 1 in #5, then we need to split the reads or choose the best candidate
+            ##
+            ## Additionally, we need to find the truth values for the hierarchy of annotations and then aggregate the
+            ## counts for each HMM into Group -> Mechanism -> Class.  The 1-to-1 mapping of reads is essential here
+            ## so that the value of the false negative counts is not a negative number.
             if not clstr_file or not annot_file:
                 raise ValueError("If truthset is provided, all non-default parameters must be defined")
             self.truthset = True
             self.truthset_counts = {}  # True counts for each gene
             self.off_target_hits = {}  # If a hit doesn't map to its proper (truthset) or any (normal) HMM, put it here
             with open(truthset, 'r') as truth:
+                ## Put each gene header into a key and its counts into the value.  Initialize the obs count dict
                 data = truth.read().split('\n')
                 for line in data:
                     temp = line.split()
@@ -105,30 +119,30 @@ class HmmerWalk:
                         self.observed_counts.setdefault(temp[1], 0)
             self.hmm_twobytwo = {}  # HMM matrix for ROC generation
             with open(clstr_file, 'r') as f:
+                ## Map HMM to its gene members, initialize the HMM two-by-two
                 header_reg = re.compile(r'>(.+?)\.\.\.')
                 line = f.readline()
-                cluster_num = -1
+                cluster_num = -1  # For zero indexing offset
                 clstr = []
                 while line:
                     if line[0] is ">":
                         cluster_num += 1
-                        if cluster_num > 0:
-                            if len(clstr) is 1:
+                        if cluster_num > 0:  # Is this the first entry? If so, skip it
+                            if len(clstr) is 1:  # No singletons
                                 clstr = []
                             else:
                                 self.clstr_members.setdefault(str(cluster_num), clstr)
                                 self.hmm_twobytwo.setdefault(str(cluster_num), [0, 0, 0, 0])  # TP, FP, FN, TN
                                 clstr = []
                     else:
-                        clstr.append(header_reg.findall(line)[0])
+                        clstr.append(header_reg.findall(line)[0])  # Begin appending headers before pushing to dict
                     line = f.readline()
-            # for key, value in sorted(self.clstr_members.iteritems()):
-            #     print key, value
             self.group_twobytwo = {}  # Group matrix for ROC generation
             self.mech_twobytwo = {}  # Mechanism matrix for ROC generation
             self.class_twobytwo = {}  # Class matrix for ROC generation
             self.gene_annots = {}  # Mapping from gene name -> annotations
             with open(annot_file, 'r') as annot:
+                ## Map the gene names to their annotations, initialize the hierarchy two-by-twos
                 data = annot.read().split('\n')
                 for line in data:
                     temp = line.split(',')
@@ -141,47 +155,29 @@ class HmmerWalk:
                             self.group_twobytwo.setdefault(temp[3], [0, 0, 0, 0])
             self.hmm_annots = {}  # HMM annotation mapping from key (hmm #) -> annotations
             for key, values in self.clstr_members.iteritems():
+                ## Calculate the annotations of each HMM, combining around a pipe '|' if multiple
                 classes, mechs, groups = zip(*[self.gene_annots[x] for x in values])
                 classes = [x for x in classes if x]
                 mechs = [x for x in mechs if x]
                 groups = [x for x in groups if x]
                 self.hmm_annots.setdefault(key, ['|'.join(set(classes)), '|'.join(set(mechs)), '|'.join(set(groups))])
-            self.class_counts = {}  # True counts for each class
-            self.mech_counts = {}  # True counts for each mechanism
-            self.group_counts = {}  # True counts for each group
-            for key, value in self.truthset_counts.iteritems():
-                if key in self.gene_annots:
-                    try:
-                        gene_class = self.gene_annots[key][0]
-                        self.class_counts[gene_class] += value
-                    except KeyError:
-                        self.class_counts.setdefault(gene_class, value)
-                    try:
-                        gene_mech = self.gene_annots[key][1]
-                        self.mech_counts[gene_mech] += value
-                    except KeyError:
-                        self.mech_counts.setdefault(gene_mech, value)
-                    try:
-                        gene_group = self.gene_annots[key][2]
-                        self.group_counts[gene_group] += value
-                    except KeyError:
-                        self.group_counts.setdefault(gene_group, value)
             self.hmm_truth = {}  # True counts for each HMM
             self.class_truth = {}  # True counts for each class
             self.mech_truth = {}  # True counts for each mechanism
             self.group_truth = {}  # True counts for each group
             for key, values in self.clstr_members.iteritems():
+                ## Generate true counts for each HMM
                 total = sum([int(self.truthset_counts[x]) for x in values if x in self.truthset_counts])
                 self.hmm_truth.setdefault(key, total)
             for key, value in self.truthset_counts.iteritems():
                 if key in self.gene_annots:
+                    ## Generate true counts for the hierarchy by passing gene name through the annotations dict
                     if self.gene_annots[key][0]:
                         class_entry = self.gene_annots[key][0]
                         try:
                             self.class_truth[class_entry] += value
                         except KeyError:
                             self.class_truth.setdefault(class_entry, value)
-                        print class_entry
                     if self.gene_annots[key][1]:
                         mech_entry = self.gene_annots[key][1]
                         try:
@@ -194,7 +190,12 @@ class HmmerWalk:
                             self.group_truth[group_entry] += value
                         except KeyError:
                             self.group_truth.setdefault(group_entry, value)
-
+            ## Initialize a dictionary of gene names with None values; this is done here to save some time later, but
+            ## ultimately this dictionary stores another (nested) dictionary of the names and counts of each HMM
+            ## that each gene hits.  This way, we can decide
+            self.gene_multihits = {key: None for key in self.gene_annots.iterkeys()}
+            self.gene_multihit_evalues = {key: None for key in self.gene_multihits.iterkeys()}
+            print self.gene_multihits
 
     def __iter__(self):
         return self
@@ -262,11 +263,16 @@ class HmmerWalk:
                                 self.class_twobytwo[gene_class][0] += 1
                             elif gene_class and gene_class not in hmm_classes:
                                 self.class_twobytwo[gene_class][1] += 1
+                        ## TRUTHSET ENABLED: Keep track of whether a gene hits across multiple
                     else:
                         try:
                             self.observed_counts[temp[0]] += 1
                         except KeyError:
                             self.observed_counts.setdefault(temp[0], 1)
+                        try:
+                            self.gene_multihits[temp[0]] + (temp[2], )
+                        except KeyError:
+                            self.gene_multihits.setdefault(temp[0], (temp[2], ))
                     return temp[2], self.hmm_lengths[temp[2]], temp[4], temp[5], temp[11]  # name, len, start, stop, str
         self.hmmer_file.close()  # catch all in case this line is reached
         assert False, 'Should not reach this line'
@@ -275,19 +281,19 @@ class HmmerWalk:
         for key, values in self.hmm_twobytwo.iteritems():
             if key in self.hmm_truth:
                 values[2] = int(self.hmm_truth[key]) - values[0]
-                values[3] = sum(self.truthset_counts.itervalues()) - sum(values)
+                values[3] = sum(self.observed_counts.itervalues()) - sum(values)
         for key, values in self.class_twobytwo.iteritems():
             if key in self.class_truth:
                 values[2] = int(self.class_truth[key]) - values[0]
-                values[3] = sum(self.truthset_counts.itervalues()) - sum(values)
+                values[3] = sum(self.observed_counts.itervalues()) - sum(values)
         for key, values in self.mech_twobytwo.iteritems():
             if key in self.mech_truth:
                 values[2] = int(self.mech_truth[key]) - values[0]
-                values[3] = sum(self.truthset_counts.itervalues()) - sum(values)
+                values[3] = sum(self.observed_counts.itervalues()) - sum(values)
         for key, values in self.group_twobytwo.iteritems():
             if key in self.group_truth:
                 values[2] = int(self.group_truth[key]) - values[0]
-                values[3] = sum(self.truthset_counts.itervalues()) - sum(values)
+                values[3] = sum(self.observed_counts.itervalues()) - sum(values)
 
     def next(self):
         if not self.stdin and type(self.hmmer_file) is str:  # only open file here if hmmer_file is a str and not fileIO
@@ -305,8 +311,8 @@ class HmmerWalk:
 
             #print([x for x in self.observed_counts.itervalues() if x])
             self.calculate_false()
-            for key, value in self.class_twobytwo.iteritems():
-                print key, value
+            # for key, value in self.hmm_twobytwo.iteritems():
+            #     print key, value
             #self.write_stats()  # Write the calculated dictionaries to the appropriate files (WIP)
             ## Remember to calculate the true/false negatives here
             ## Also to calculate observed aggregated values
