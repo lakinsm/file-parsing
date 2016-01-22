@@ -30,7 +30,6 @@ Note: Reads in the original fasta/fastq file MUST have a unique header for this 
 #############
 import os.path
 import argparse
-import exceptions
 import numpy as np
 import sys
 import re
@@ -54,7 +53,7 @@ class HmmerTime:
     hash-mapping of header to sequence information.  Only one line will be held in memory at a time using this method.
     The object walks along the file and, if a truthset is provided, outputs two-by-two values for accuracy.
     """
-    def __init__(self, filepath, length, evalue=10, diff=0, truthset=None, clstr_file=None, annot_file=None,):
+    def __init__(self, filepath, length, evalue=10, multi=False, truthset=None, clstr_file=None, annot_file=None,):
         """
         Constructor; can't touch this.  This is a hellish nightmare of an __init__ function.
         All of sound mind, turn back now.
@@ -76,20 +75,57 @@ class HmmerTime:
         self.reads_mapping = 0
         self.reads_total = 0
         self.ethreshold = float(evalue)
-        self.observed_counts = {}  # Observed counts for each gene
-        self.observed_group = {}  # Observed counts for each group, aggregated values
-        self.observed_mech = {}  # Observed counts for each mechanism, aggregated values
-        self.observed_class = {}  # Observed counts for each class, aggregated values
+        self.multicorrect = multi
+        self.hmm_observed = {}  # Mapping of HMMs to hits observed
+        self.class_observed = {}  # Mapping of Classes to hits observed
+        self.mech_observed = {}  # Mapping of Mechanisms to hits observed
+        self.group_observed = {}  # Mapping of Groups to hits observed
         self.clstr_members = {}  # Mapping of hmm # -> genes used to build that HMM
         self.truthset = False
         self.hmm_lengths = {}  # Length of each hmm, hmm # -> length
         self.gene_multihits = {}  # Will store HMM hits for each gene
+        self.hmm_twobytwo = {}  # HMM matrix for ROC generation, only used for truthset
         with open(length, 'r') as hmm_length:
             data = hmm_length.read().split('\n')[1:]
             for line in data:
                 line = line.split()
                 if line:
                     self.hmm_lengths.setdefault(line[0], int(line[1]))
+        with open(clstr_file, 'r') as f:
+            ## Map HMM to its gene members, initialize the HMM two-by-two
+            header_reg = re.compile(r'>(.+?)\.\.\.')
+            line = f.readline()
+            cluster_num = -1  # For zero indexing offset
+            clstr = []
+            while line:
+                if line[0] is ">":
+                    cluster_num += 1
+                    if cluster_num > 0:  # Is this the first entry? If so, skip it
+                        if len(clstr) is 1:  # No singletons
+                            clstr = []
+                        else:
+                            self.clstr_members.setdefault(str(cluster_num), clstr)
+                            self.hmm_twobytwo.setdefault(str(cluster_num), [0, 0, 0, 0])  # TP, FP, FN, TN
+                            clstr = []
+                else:
+                    clstr.append(header_reg.findall(line)[0])  # Begin appending headers before pushing to dict
+                line = f.readline()
+        self.gene_annots = {}  # Mapping from gene name -> annotations
+        with open(annot_file, 'r') as annot:
+            ## Map the gene names to their annotations, initialize the hierarchy two-by-twos
+            data = annot.read().split('\n')
+            for line in data:
+                temp = line.split(',')
+                if temp[0]:
+                    self.gene_annots.setdefault(temp[0], temp[1:])
+        self.hmm_annots = {}  # HMM annotation mapping from key (hmm #) -> annotations
+        for key, values in self.clstr_members.iteritems():
+            ## Calculate the annotations of each HMM, combining around a pipe '|' if multiple
+            classes, mechs, groups = zip(*[self.gene_annots[x] for x in values])
+            classes = [x for x in classes if x]
+            mechs = [x for x in mechs if x]
+            groups = [x for x in groups if x]
+            self.hmm_annots.setdefault(key, ['|'.join(set(classes)), '|'.join(set(mechs)), '|'.join(set(groups))])
         if truthset:
             ## This section is complicated.  To calculate two-by-twos, we need to keep track of several things:
             ## 1. The true number of reads that map to a given gene from the test set
@@ -102,11 +138,8 @@ class HmmerTime:
             ## Additionally, we need to find the truth values for the hierarchy of annotations and then aggregate the
             ## counts for each HMM into Group -> Mechanism -> Class.  The 1-to-1 mapping of reads is essential here
             ## so that the value of the false negative counts is not a negative number.
-            if not clstr_file or not annot_file:
-                raise ValueError("If truthset is provided, all non-default parameters must be defined")
             self.truthset = True
             self.truthset_counts = {}  # True counts for each gene
-            self.off_target_hits = {}  # If a hit doesn't map to its proper (truthset) or any (normal) HMM, put it here
             with open(truthset, 'r') as truth:
                 ## Put each gene header into a key and its counts into the value.  Initialize the obs count dict
                 data = truth.read().split('\n')
@@ -116,53 +149,9 @@ class HmmerTime:
                         temp = [temp[0], " ".join(temp[1:])]
                         if temp:
                             self.truthset_counts.setdefault(temp[1], int(temp[0]))
-                            self.observed_counts.setdefault(temp[1], 0)
-            # for key, value in self.truthset_counts.iteritems():
-            #     print key, value
-            self.hmm_twobytwo = {}  # HMM matrix for ROC generation
-            with open(clstr_file, 'r') as f:
-                ## Map HMM to its gene members, initialize the HMM two-by-two
-                header_reg = re.compile(r'>(.+?)\.\.\.')
-                line = f.readline()
-                cluster_num = -1  # For zero indexing offset
-                clstr = []
-                while line:
-                    if line[0] is ">":
-                        cluster_num += 1
-                        if cluster_num > 0:  # Is this the first entry? If so, skip it
-                            if len(clstr) is 1:  # No singletons
-                                clstr = []
-                            else:
-                                self.clstr_members.setdefault(str(cluster_num), clstr)
-                                self.hmm_twobytwo.setdefault(str(cluster_num), [0, 0, 0, 0])  # TP, FP, FN, TN
-                                clstr = []
-                    else:
-                        clstr.append(header_reg.findall(line)[0])  # Begin appending headers before pushing to dict
-                    line = f.readline()
             self.group_twobytwo = {}  # Group matrix for ROC generation
             self.mech_twobytwo = {}  # Mechanism matrix for ROC generation
             self.class_twobytwo = {}  # Class matrix for ROC generation
-            self.gene_annots = {}  # Mapping from gene name -> annotations
-            with open(annot_file, 'r') as annot:
-                ## Map the gene names to their annotations, initialize the hierarchy two-by-twos
-                data = annot.read().split('\n')
-                for line in data:
-                    temp = line.split(',')
-                    if temp[0]:
-                        self.gene_annots.setdefault(temp[0], temp[1:])
-                        # self.class_twobytwo.setdefault(temp[1], [0, 0, 0, 0])
-                        # if temp[2]:
-                        #     self.mech_twobytwo.setdefault(temp[2], [0, 0, 0, 0])
-                        # if temp[3]:
-                        #     self.group_twobytwo.setdefault(temp[3], [0, 0, 0, 0])
-            self.hmm_annots = {}  # HMM annotation mapping from key (hmm #) -> annotations
-            for key, values in self.clstr_members.iteritems():
-                ## Calculate the annotations of each HMM, combining around a pipe '|' if multiple
-                classes, mechs, groups = zip(*[self.gene_annots[x] for x in values])
-                classes = [x for x in classes if x]
-                mechs = [x for x in mechs if x]
-                groups = [x for x in groups if x]
-                self.hmm_annots.setdefault(key, ['|'.join(set(classes)), '|'.join(set(mechs)), '|'.join(set(groups))])
             self.hmm_truth = {}  # True counts for each HMM
             self.class_truth = {}  # True counts for each class
             self.mech_truth = {}  # True counts for each mechanism
@@ -172,6 +161,7 @@ class HmmerTime:
                 total = sum([int(self.truthset_counts[x]) for x in values if x in self.truthset_counts])
                 self.hmm_truth.setdefault(key, total)
             for key, values in self.hmm_truth.iteritems():
+                ## Generate aggregated hierarchy truth counts from the HMM truth counts
                 annots = self.hmm_annots[key]
                 class_annot = annots[0].split('|')
                 mech_annot = annots[1].split('|')
@@ -197,27 +187,6 @@ class HmmerTime:
                         self.group_truth[entry] = list1 + (list2 / float(len(group_annot)))
                     except KeyError:
                         self.group_truth.setdefault(entry, np.array(values) / float(len(group_annot)))
-            # for key, values in self.truthset_counts.iteritems():
-            #     if key in self.gene_annots:
-            #         ## Generate true counts for the hierarchy by passing gene name through the annotations dict
-            #         if self.gene_annots[key][0]:
-            #             class_entry = self.gene_annots[key][0]
-            #             try:
-            #                 self.class_truth[class_entry] += value
-            #             except KeyError:
-            #                 self.class_truth.setdefault(class_entry, value)
-            #         if self.gene_annots[key][1]:
-            #             mech_entry = self.gene_annots[key][1]
-            #             try:
-            #                 self.mech_truth[mech_entry] += value
-            #             except KeyError:
-            #                 self.mech_truth.setdefault(mech_entry, value)
-            #         if self.gene_annots[key][2]:
-            #             group_entry = self.gene_annots[key][2]
-            #             try:
-            #                 self.group_truth[group_entry] += value
-            #             except KeyError:
-            #                 self.group_truth.setdefault(group_entry, value)
 
     def __iter__(self):
         return self
@@ -241,51 +210,17 @@ class HmmerTime:
                     sys.stdout.flush()
                 temp = hmmer_line.split()
                 read_name = temp[0]
-                temp[0] = '|'.join(temp[0].split('|')[:-1])
-
+                temp[0] = '|'.join(temp[0].split('|')[:-1])  # This is a predetermined format correction for testset
                 if float(temp[12]) < float(self.ethreshold):
                     self.reads_mapping += 1
                     ## Basic observation increment rules
                     if self.truthset:
-                        try:
-                            self.observed_counts[temp[0]] += 1
-                        except KeyError:
-                            try:
-                                self.off_target_hits[temp[0]] += 1
-                            except KeyError:
-                                self.off_target_hits.setdefault(temp[0], 1)
                         ## TRUTHSET ENABLED: What category of HMM-level two-by-two does this hit fall under?
                         ## Can only calculate TP/FP here; the others are done at the end
                         if temp[0] in self.clstr_members[temp[2]]:
                             self.hmm_twobytwo[temp[2]][0] += 1
                         else:
                             self.hmm_twobytwo[temp[2]][1] += 1
-                        ## TRUTHSET ENABLED: What category of Group-level two-by-two does this hit fall under?
-                        ## Can only calculate TP/FP here; the others are done at the end
-                        # hmm_annot = self.hmm_annots[temp[2]]
-                        # hmm_groups = hmm_annot[2].split('|')
-                        # if temp[0] in self.gene_annots:
-                        #     gene_group = self.gene_annots[temp[0]][2]
-                        #     if gene_group and (gene_group in hmm_groups):
-                        #         self.group_twobytwo[gene_group][0] += 1
-                        #     elif gene_group and (gene_group not in hmm_groups):
-                        #         self.group_twobytwo[gene_group][1] += 1
-                        #     ## TRUTHSET ENABLED: What category of Mechanism-level two-by-two does this hit fall under?
-                        #     ## Can only calculate TP/FP here; the others are done at the end
-                        #     hmm_mechs = hmm_annot[1].split('|')
-                        #     gene_mech = self.gene_annots[temp[0]][1]
-                        #     if gene_mech and (gene_mech in hmm_mechs):
-                        #         self.mech_twobytwo[gene_mech][0] += 1
-                        #     elif gene_mech and (gene_mech not in hmm_mechs):
-                        #         self.mech_twobytwo[gene_mech][1] += 1
-                        #     ## TRUTHSET ENABLED: What category of Class-level two-by-two does this hit fall under?
-                        #     ## Can only calculate TP/FP here; the others are done at the end
-                        #     hmm_classes = hmm_annot[0].split('|')
-                        #     gene_class = self.gene_annots[temp[0]][0]
-                        #     if gene_class and (gene_class in hmm_classes):
-                        #         self.class_twobytwo[gene_class][0] += 1
-                        #     elif gene_class and (gene_class not in hmm_classes):
-                        #         self.class_twobytwo[gene_class][1] += 1
                         ## TRUTHSET ENABLED: Keep track of whether a gene hits across multiple HMMs
                         try:
                             self.gene_multihits[read_name][temp[2]] += 1
@@ -296,9 +231,9 @@ class HmmerTime:
                                 self.gene_multihits.setdefault(read_name, {temp[2]: 1})
                     else:
                         try:
-                            self.observed_counts[read_name] += 1
+                            self.hmm_observed[temp[2]] += 1
                         except KeyError:
-                            self.observed_counts.setdefault(read_name, 1)
+                            self.hmm_observed.setdefault(temp[2], 1)
                         try:
                             self.gene_multihits[read_name][temp[2]] += 1
                         except KeyError:
@@ -315,137 +250,114 @@ class HmmerTime:
         For our purposes, reads need to maintain a one-to-one mapping with hits counted.  Therefore, we both need to
         correct for hits across multiple HMMs due to homology and also for different motifs within the same read
         hitting multiple times within the same HMM.  This correction will be optional in the production version of
-        the script.  Note that for this to work, reads must have a unique header in the original fastq/fasta file.
+        the script.  Note that for this to work, reads must have a unique header in the original fastq/fasta file
+        that is at the end of the read, separated by a pipe '|'.
+
+        For non-truthset corrections, just correct the observed counts for each hierarchy and the HMMs, since we can't
+        a priori know what is true and what is not.  THIS CORRECTION SHOULD NOT BE USED FOR ASSEMBLED CONTIGS, since
+        we can't know from assembled contigs whether they should truly multi-map or not.  It is advised to only use
+        this feature for raw reads.
         :return: void
         """
-        #print self.hmm_twobytwo['617']
-        for key, subdict in self.gene_multihits.iteritems():
-            key = '|'.join(key.split('|')[0:-1])
-            if subdict:
-                # multiclass = {}
-                # multimech = {}
-                # multigroup = {}
-                # for k, v in subdict.iteritems():
-                #     class_annot = self.hmm_annots[k][0].split('|')
-                #     for entry in class_annot:
-                #         multiclass.setdefault(entry, v)
-                #     mech_annot = self.hmm_annots[k][1].split('|')
-                #     for entry in mech_annot:
-                #         multimech.setdefault(entry, v)
-                #     group_annot = self.hmm_annots[k][2].split('|')
-                #     for entry in group_annot:
-                #         multigroup.setdefault(entry, v)
-                ## Correct for HMM counts
-                if len(subdict) > 1:
-                    for nkey, nvalue in subdict.iteritems():
-                        if key in self.clstr_members[nkey]:
-                            self.hmm_twobytwo[nkey][0] -= nvalue
-                            self.hmm_twobytwo[nkey][0] += float(nvalue) / sum(subdict.values())
-                        else:
-                            self.hmm_twobytwo[nkey][1] -= nvalue
-                            self.hmm_twobytwo[nkey][1] += float(nvalue) / sum(subdict.values())
-
-                ## Correct for Class counts
-                # if len(multiclass) > 1:
-                #     for nkey, nvalue in multiclass.iteritems():
-                #         if key in self.gene_annots and self.gene_annots[key][0] and nkey:
-                #             if nkey is self.gene_annots[key][0]:
-                #                 self.class_twobytwo[nkey][0] -= nvalue
-                #                 self.class_twobytwo[nkey][0] += float(nvalue) / sum(multiclass.values())
-                #             else:
-                #                 self.class_twobytwo[nkey][1] -= nvalue
-                #                 self.class_twobytwo[nkey][1] += float(nvalue) / sum(multiclass.values())
-                # ## Correct for Mech counts
-                # if len(multimech) > 1:
-                #     for nkey, nvalue in multimech.iteritems():
-                #         if key in self.gene_annots and self.gene_annots[key][1] and nkey:
-                #             if nkey is self.gene_annots[key][1]:
-                #                 self.mech_twobytwo[nkey][0] -= nvalue
-                #                 self.mech_twobytwo[nkey][0] += float(nvalue) / sum(multimech.values())
-                #             else:
-                #                 self.mech_twobytwo[nkey][1] -= nvalue
-                #                 self.mech_twobytwo[nkey][1] += float(nvalue) / sum(multimech.values())
-                # ## Correct for Group counts
-                # if len(multigroup) > 1:
-                #     for nkey, nvalue in multigroup.iteritems():
-                #         if key in self.gene_annots and self.gene_annots[key][2] and nkey:
-                #             if nkey is self.gene_annots[key][2]:
-                #                 self.group_twobytwo[nkey][0] -= nvalue
-                #                 self.group_twobytwo[nkey][0] += float(nvalue) / sum(multigroup.values())
-                #             else:
-                #                 self.group_twobytwo[nkey][1] -= nvalue
-                #                 self.group_twobytwo[nkey][1] += float(nvalue) / sum(multigroup.values())
-                ## Now correct for within-HMM multihits by reducing any multiple read hits to a single hit
-                if len(subdict) == 1:
-                    for nkey, nvalue in subdict.iteritems():
-                        if key in self.clstr_members[nkey]:
-                            self.hmm_twobytwo[nkey][0] -= nvalue
-                            self.hmm_twobytwo[nkey][0] += 1
-                        else:
-                            self.hmm_twobytwo[nkey][1] -= nvalue
-                            self.hmm_twobytwo[nkey][1] += 1
-                ## Correct for Class counts
-                # if len(multiclass) == 1:
-                #     for nkey, nvalue in multiclass.iteritems():
-                #         if key in self.gene_annots and self.gene_annots[key][0] and nkey:
-                #             if nkey is self.gene_annots[key][0]:
-                #                 self.class_twobytwo[nkey][0] -= nvalue
-                #                 self.class_twobytwo[nkey][0] += 1
-                #             else:
-                #                 self.class_twobytwo[nkey][1] -= nvalue
-                #                 self.class_twobytwo[nkey][1] += 1
-                # ## Correct for Mech counts
-                # if len(multimech) == 1:
-                #     for nkey, nvalue in multimech.iteritems():
-                #         if key in self.gene_annots and self.gene_annots[key][1] and nkey:
-                #             if nkey is self.gene_annots[key][1]:
-                #                 self.mech_twobytwo[nkey][0] -= nvalue
-                #                 self.mech_twobytwo[nkey][0] += 1
-                #             else:
-                #                 self.mech_twobytwo[nkey][1] -= nvalue
-                #                 self.mech_twobytwo[nkey][1] += 1
-                # ## Correct for Group counts
-                # if len(multigroup) == 1:
-                #     for nkey, nvalue in multigroup.iteritems():
-                #         if key in self.gene_annots and self.gene_annots[key][2] and nkey:
-                #             if nkey is self.gene_annots[key][2]:
-                #                 self.group_twobytwo[nkey][0] -= nvalue
-                #                 self.group_twobytwo[nkey][0] += 1
-                #             else:
-                #                 self.group_twobytwo[nkey][1] -= nvalue
-                #                 self.group_twobytwo[nkey][1] += 1
-        #print self.hmm_twobytwo['617']
+        if self.multicorrect and self.truthset:
+            for key, subdict in self.gene_multihits.iteritems():
+                key = '|'.join(key.split('|')[0:-1])
+                if subdict:
+                    ## Correct for HMM counts
+                    if len(subdict) > 1:
+                        for nkey, nvalue in subdict.iteritems():
+                            if key in self.clstr_members[nkey]:
+                                self.hmm_twobytwo[nkey][0] -= nvalue
+                                self.hmm_twobytwo[nkey][0] += float(nvalue) / sum(subdict.values())
+                            else:
+                                self.hmm_twobytwo[nkey][1] -= nvalue
+                                self.hmm_twobytwo[nkey][1] += float(nvalue) / sum(subdict.values())
+                    if len(subdict) == 1:
+                        for nkey, nvalue in subdict.iteritems():
+                            if key in self.clstr_members[nkey]:
+                                self.hmm_twobytwo[nkey][0] -= nvalue
+                                self.hmm_twobytwo[nkey][0] += 1
+                            else:
+                                self.hmm_twobytwo[nkey][1] -= nvalue
+                                self.hmm_twobytwo[nkey][1] += 1
+        elif self.multicorrect and not self.truthset:
+            for key, subdict in self.gene_multihits.iteritems():
+                if subdict:
+                    ## Correct for HMM counts
+                    if len(subdict) > 1:
+                        for nkey, nvalue in subdict.iteritems():
+                            self.hmm_observed[nkey] -= nvalue
+                            self.hmm_observed[nkey] += float(nvalue) / sum(subdict.values())
+                    if len(subdict) == 1:
+                        for nkey, nvalue in subdict.iteritems():
+                            self.hmm_observed[nkey] -= nvalue
+                            self.hmm_observed[nkey] += 1
 
     def aggregate_hierarchy(self):
-        for key, values in self.hmm_twobytwo.iteritems():
-            annots = self.hmm_annots[key]
-            class_annot = annots[0].split('|')
-            mech_annot = annots[1].split('|')
-            group_annot = annots[2].split('|')
-            for entry in class_annot:
-                try:
-                    list1 = np.array(self.class_twobytwo[entry])
-                    list2 = np.array(values)
-                    self.class_twobytwo[entry] = list1 + (list2 / float(len(class_annot)))
-                except KeyError:
-                    self.class_twobytwo.setdefault(entry, np.array(values) / float(len(class_annot)))
-            for entry in mech_annot:
-                try:
-                    list1 = np.array(self.mech_twobytwo[entry])
-                    list2 = np.array(values)
-                    self.mech_twobytwo[entry] = list1 + (list2 / float(len(mech_annot)))
-                except KeyError:
-                    self.mech_twobytwo.setdefault(entry, np.array(values) / float(len(mech_annot)))
-            for entry in group_annot:
-                try:
-                    list1 = np.array(self.group_twobytwo[entry])
-                    list2 = np.array(values)
-                    self.group_twobytwo[entry] = list1 + (list2 / float(len(group_annot)))
-                except KeyError:
-                    self.group_twobytwo.setdefault(entry, np.array(values) / float(len(group_annot)))
-
+        """
+        Create the actual aggregated hierarchy counts based on the annotation file.  All counts are fundamentally
+        aggregated from the HMM assignments, since this is comparing apples to apples with the truthset.  We are
+        interested in the accuracy of HMM assignment and classification, not necessarily in the absolute annotation of
+        the reads themselves.  By default, reads are split evenly if more than one annotation is present in the HMM
+        when aggregating up.  The user is left to decide whether to round the output values or leave them as floats.
+        :return: void
+        """
+        if self.truthset:
+            for key, values in self.hmm_twobytwo.iteritems():
+                annots = self.hmm_annots[key]
+                class_annot = annots[0].split('|')
+                mech_annot = annots[1].split('|')
+                group_annot = annots[2].split('|')
+                for entry in class_annot:
+                    try:
+                        list1 = np.array(self.class_twobytwo[entry])
+                        list2 = np.array(values)
+                        self.class_twobytwo[entry] = list1 + (list2 / float(len(class_annot)))
+                    except KeyError:
+                        self.class_twobytwo.setdefault(entry, np.array(values) / float(len(class_annot)))
+                for entry in mech_annot:
+                    try:
+                        list1 = np.array(self.mech_twobytwo[entry])
+                        list2 = np.array(values)
+                        self.mech_twobytwo[entry] = list1 + (list2 / float(len(mech_annot)))
+                    except KeyError:
+                        self.mech_twobytwo.setdefault(entry, np.array(values) / float(len(mech_annot)))
+                for entry in group_annot:
+                    try:
+                        list1 = np.array(self.group_twobytwo[entry])
+                        list2 = np.array(values)
+                        self.group_twobytwo[entry] = list1 + (list2 / float(len(group_annot)))
+                    except KeyError:
+                        self.group_twobytwo.setdefault(entry, np.array(values) / float(len(group_annot)))
+        else:
+            for key, value in self.hmm_observed.iteritems():
+                annots = self.hmm_annots[key]
+                class_annot = annots[0].split('|')
+                mech_annot = annots[1].split('|')
+                group_annot = annots[2].split('|')
+                for entry in class_annot:
+                    try:
+                        self.class_observed[entry] += value / float(len(class_annot))
+                    except KeyError:
+                        self.class_observed.setdefault(entry, value / float(len(class_annot)))
+                for entry in mech_annot:
+                    try:
+                        self.mech_observed[entry] += value / float(len(mech_annot))
+                    except KeyError:
+                        self.mech_observed.setdefault(entry, value / float(len(mech_annot)))
+                for entry in group_annot:
+                    try:
+                        self.group_observed[entry] += value / float(len(group_annot))
+                    except KeyError:
+                        self.group_observed.setdefault(entry, value / float(len(group_annot)))
 
     def calculate_false(self):
+        """
+        This function is only utilized when a truthset is provided; it calculates the True/False negatives
+        for each HMM and hierarchy two-by-two.  Note that this can only be done after all reads have been taken into
+        account.
+        :return: void
+        """
         for key, values in self.hmm_twobytwo.iteritems():
             if key in self.hmm_truth:
                 values[2] = int(self.hmm_truth[key]) - values[0]
@@ -472,20 +384,22 @@ class HmmerTime:
         if not value:  # close file on EOF
             if not self.stdin:
                 self.hmmer_file.close()
-            if self.truthset:
+            if self.multicorrect:
                 self.correct_multihit()
-                self.aggregate_hierarchy()
+            self.aggregate_hierarchy()
+            if self.truthset:
                 self.calculate_false()
-            for key, value in self.class_twobytwo.iteritems():
-                if sum(value) > 0:
-                    print key, [int(x) for x in value]
-            zipped = zip(*[x for x in self.class_twobytwo.itervalues()])
-            print sum([int(x) for x in zipped[0]]) + sum([int(y) for y in zipped[2]])
+            #     for key, value in self.class_twobytwo.iteritems():
+            #         if sum(value) > 0:
+            #             print key, [int(x) for x in value]
+            #     zipped = zip(*[x for x in self.class_twobytwo.itervalues()])
+            #     print sum([int(x) for x in zipped[0]]) + sum([int(y) for y in zipped[2]])
+            for key, value in self.class_observed.iteritems():
+                if value > 0:
+                    print key, value
             # print sum(self.class_truth.itervalues())
             # print sum(self.hmm_truth.itervalues())
             #self.write_stats()  # Write the calculated dictionaries to the appropriate files (WIP)
-            ## Remember to calculate the true/false negatives here
-            ## Also to calculate observed aggregated values
             raise StopIteration()
         else:
             return value
@@ -502,9 +416,9 @@ parser.add_argument('outputfile', type=str, help='File path to desired output fi
 parser.add_argument('graph_dir', type=str, help='Path to output directory for graphs')
 parser.add_argument('clstr', type=str, help='Path to file containing clstr generation info')
 parser.add_argument('annots', type=str, help='Path to annotation file')
-parser.add_argument('--evalue', type=float, default=10, help='Evalue under which to keep hits')
-parser.add_argument('--truthset', nargs='?', default=None, help='Path to file containing uniq -c style truth set counts')
-parser.add_argument('--diff', nargs ='?', default=0, help='Difference needed to declare an Evalue truth over another')
+parser.add_argument('-e', '--evalue', type=float, default=10, help='Evalue under which to keep hits')
+parser.add_argument('-t', '--truthset', nargs='?', default=None, help='Path to file containing uniq -c style truth set counts')
+parser.add_argument('-m', '--multicorrect', action='store_true', default=False, help='If set, reads have a one to one mapping with reported hits')
 
 
 ##########
@@ -525,7 +439,7 @@ if __name__ == '__main__':
     with open(outfile, 'w') as out:
         vector_hash = {}  # This stores gene names that were referenced in the SAM file, along with their vectors
         vector_counts = {}  # This stores gene names as in the other dictionary, but stores read counts instead
-        for line in HmmerTime(infile, args.hmm_len, args.evalue, args.diff, args.truthset, args.clstr, args.annots):
+        for line in HmmerTime(infile, args.hmm_len, args.evalue, args.multicorrect, args.truthset, args.clstr, args.annots):
             if int(line[2]) < int(line[3]):
                 start = line[2]
                 stop = line[3]
