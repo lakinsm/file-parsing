@@ -73,6 +73,7 @@ else:
         counter = 1
         if args.fastq:
             for header, seq, line3, line4 in data:
+                header = header.replace(' ', '_')
                 if len(seq) > 124:
                     seq = seq[0:124]
                 if len(line4) > 124:
@@ -83,7 +84,8 @@ else:
                     out.write("@"+header+'\n'+seq+'\n'+line3+'\n'+line4+'\n')
                 counter += 1
         else:
-            for header,seq in data:
+            for header, seq in data:
+                header = header.replace(' ', '_')
                 if len(seq) > 124:
                     seq = seq[0:124]
                 if args.unique:

@@ -84,6 +84,7 @@ class HmmerTime:
         self.hmm_lengths = {}  # Length of each hmm, hmm # -> length
         self.gene_multihits = {}  # Will store HMM hits for each gene
         self.gene_multihit_evalues = {}  # Will store evalues for each hit
+        self.debug = []
         with open(length, 'r') as hmm_length:
             data = hmm_length.read().split('\n')[1:]
             for line in data:
@@ -111,10 +112,14 @@ class HmmerTime:
                 ## Put each gene header into a key and its counts into the value.  Initialize the obs count dict
                 data = truth.read().split('\n')
                 for line in data:
-                    temp = line.split()
-                    if temp:
-                        self.truthset_counts.setdefault(temp[1], int(temp[0]))
-                        self.observed_counts.setdefault(temp[1], 0)
+                    if line:
+                        temp = line.split()
+                        temp = [temp[0], " ".join(temp[1:])]
+                        if temp:
+                            self.truthset_counts.setdefault(temp[1], int(temp[0]))
+                            self.observed_counts.setdefault(temp[1], 0)
+            # for key, value in self.truthset_counts.iteritems():
+            #     print key, value
             self.hmm_twobytwo = {}  # HMM matrix for ROC generation
             with open(clstr_file, 'r') as f:
                 ## Map HMM to its gene members, initialize the HMM two-by-two
@@ -227,6 +232,8 @@ class HmmerTime:
                         ## TRUTHSET ENABLED: What category of HMM-level two-by-two does this hit fall under?
                         ## Can only calculate TP/FP here; the others are done at the end
                         if temp[0] in self.clstr_members[temp[2]]:
+                            if temp[2] == '617':
+                                self.debug.append(temp[0])
                             self.hmm_twobytwo[temp[2]][0] += 1
                         else:
                             self.hmm_twobytwo[temp[2]][1] += 1
@@ -288,7 +295,9 @@ class HmmerTime:
         the script.  Note that for this to work, reads must have a unique header in the original fastq/fasta file.
         :return: void
         """
+        print self.hmm_twobytwo['617']
         for key, subdict in self.gene_multihits.iteritems():
+            key = '|'.join(key.split('|')[0:-1])
             if subdict:
                 multiclass = {}
                 multimech = {}
@@ -381,24 +390,25 @@ class HmmerTime:
                             else:
                                 self.group_twobytwo[nkey][1] -= nvalue
                                 self.group_twobytwo[nkey][1] += 1
+        print self.hmm_twobytwo['617']
 
     def calculate_false(self):
         for key, values in self.hmm_twobytwo.iteritems():
             if key in self.hmm_truth:
                 values[2] = int(self.hmm_truth[key]) - values[0]
-                values[3] = sum(self.observed_counts.itervalues()) - sum(values)
+                values[3] = sum(self.truthset_counts.itervalues()) - sum(values)
         for key, values in self.class_twobytwo.iteritems():
             if key in self.class_truth:
                 values[2] = int(self.class_truth[key]) - values[0]
-                values[3] = sum(self.observed_counts.itervalues()) - sum(values)
+                values[3] = sum(self.truthset_counts.itervalues()) - sum(values)
         for key, values in self.mech_twobytwo.iteritems():
             if key in self.mech_truth:
                 values[2] = int(self.mech_truth[key]) - values[0]
-                values[3] = sum(self.observed_counts.itervalues()) - sum(values)
+                values[3] = sum(self.truthset_counts.itervalues()) - sum(values)
         for key, values in self.group_twobytwo.iteritems():
             if key in self.group_truth:
                 values[2] = int(self.group_truth[key]) - values[0]
-                values[3] = sum(self.observed_counts.itervalues()) - sum(values)
+                values[3] = sum(self.truthset_counts.itervalues()) - sum(values)
 
     def next(self):
         if not self.stdin and type(self.hmmer_file) is str:  # only open file here if hmmer_file is a str and not fileIO
@@ -407,10 +417,22 @@ class HmmerTime:
         if not value:  # close file on EOF
             if not self.stdin:
                 self.hmmer_file.close()
-            self.correct_multihit()
-            self.calculate_false()
-            for key, value in self.class_twobytwo.iteritems():
-                print key, value
+            if self.truthset:
+                self.correct_multihit()
+                self.calculate_false()
+            for key, value in self.hmm_twobytwo.iteritems():
+                if sum(value) > 0 and any(n < 0 for n in value):
+                    print key, value, self.hmm_truth[key]
+            print len(self.debug)
+            print self.clstr_members['617']
+            temp = [self.truthset_counts[x] for x in set(self.debug) if x in self.clstr_members['617']]
+            print temp, sum(temp)
+            print len(self.clstr_members['617'])
+            total = 0
+            for key, subdict in self.gene_multihits.iteritems():  # The error is here
+                if '617' in subdict:
+                    total += 1
+            print total
             #self.write_stats()  # Write the calculated dictionaries to the appropriate files (WIP)
             ## Remember to calculate the true/false negatives here
             ## Also to calculate observed aggregated values
@@ -428,10 +450,10 @@ parser.add_argument('input', type=str, help='File path to HMMer tblout file, or 
 parser.add_argument('hmm_len', type=str, help='Path to file containing HMM lengths')
 parser.add_argument('outputfile', type=str, help='File path to desired output file (.csv format)')
 parser.add_argument('graph_dir', type=str, help='Path to output directory for graphs')
+parser.add_argument('clstr', type=str, help='Path to file containing clstr generation info')
+parser.add_argument('annots', type=str, help='Path to annotation file')
 parser.add_argument('--evalue', type=float, default=10, help='Evalue under which to keep hits')
 parser.add_argument('--truthset', nargs='?', default=None, help='Path to file containing uniq -c style truth set counts')
-parser.add_argument('--clstr', nargs='?', default=None, help='Path to file containing clstr generation info')
-parser.add_argument('--annots', nargs='?', default=None, help='Path to annotation file')
 parser.add_argument('--diff', nargs ='?', default=0, help='Difference needed to declare an Evalue truth over another')
 
 
