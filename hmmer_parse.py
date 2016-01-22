@@ -30,6 +30,7 @@ Note: Reads in the original fasta/fastq file MUST have a unique header for this 
 #############
 import os.path
 import argparse
+import exceptions
 import numpy as np
 import sys
 import re
@@ -83,8 +84,6 @@ class HmmerTime:
         self.truthset = False
         self.hmm_lengths = {}  # Length of each hmm, hmm # -> length
         self.gene_multihits = {}  # Will store HMM hits for each gene
-        self.gene_multihit_evalues = {}  # Will store evalues for each hit
-        self.debug = []
         with open(length, 'r') as hmm_length:
             data = hmm_length.read().split('\n')[1:]
             for line in data:
@@ -232,8 +231,6 @@ class HmmerTime:
                         ## TRUTHSET ENABLED: What category of HMM-level two-by-two does this hit fall under?
                         ## Can only calculate TP/FP here; the others are done at the end
                         if temp[0] in self.clstr_members[temp[2]]:
-                            if temp[2] == '617':
-                                self.debug.append(temp[0])
                             self.hmm_twobytwo[temp[2]][0] += 1
                         else:
                             self.hmm_twobytwo[temp[2]][1] += 1
@@ -243,33 +240,34 @@ class HmmerTime:
                         hmm_groups = hmm_annot[2].split('|')
                         if temp[0] in self.gene_annots:
                             gene_group = self.gene_annots[temp[0]][2]
-                            if gene_group and gene_group in hmm_groups:
+                            if gene_group and (gene_group in hmm_groups):
                                 self.group_twobytwo[gene_group][0] += 1
-                            elif gene_group and gene_group not in hmm_groups:
+                            elif gene_group and (gene_group not in hmm_groups):
                                 self.group_twobytwo[gene_group][1] += 1
-                        ## TRUTHSET ENABLED: What category of Mechanism-level two-by-two does this hit fall under?
-                        ## Can only calculate TP/FP here; the others are done at the end
-                        hmm_mechs = hmm_annot[1].split('|')
-                        if temp[0] in self.gene_annots:
+                            ## TRUTHSET ENABLED: What category of Mechanism-level two-by-two does this hit fall under?
+                            ## Can only calculate TP/FP here; the others are done at the end
+                            hmm_mechs = hmm_annot[1].split('|')
                             gene_mech = self.gene_annots[temp[0]][1]
-                            if gene_mech and gene_mech in hmm_mechs:
+                            if gene_mech and (gene_mech in hmm_mechs):
                                 self.mech_twobytwo[gene_mech][0] += 1
-                            elif gene_mech and gene_mech not in hmm_mechs:
+                            elif gene_mech and (gene_mech not in hmm_mechs):
                                 self.mech_twobytwo[gene_mech][1] += 1
-                        ## TRUTHSET ENABLED: What category of Class-level two-by-two does this hit fall under?
-                        ## Can only calculate TP/FP here; the others are done at the end
-                        hmm_classes = hmm_annot[0].split('|')
-                        if temp[0] in self.gene_annots:
+                            ## TRUTHSET ENABLED: What category of Class-level two-by-two does this hit fall under?
+                            ## Can only calculate TP/FP here; the others are done at the end
+                            hmm_classes = hmm_annot[0].split('|')
                             gene_class = self.gene_annots[temp[0]][0]
-                            if gene_class and gene_class in hmm_classes:
+                            if gene_class and (gene_class in hmm_classes):
                                 self.class_twobytwo[gene_class][0] += 1
-                            elif gene_class and gene_class not in hmm_classes:
+                            elif gene_class and (gene_class not in hmm_classes):
                                 self.class_twobytwo[gene_class][1] += 1
                         ## TRUTHSET ENABLED: Keep track of whether a gene hits across multiple HMMs
                         try:
                             self.gene_multihits[read_name][temp[2]] += 1
-                        except (TypeError, KeyError):
-                            self.gene_multihits.setdefault(read_name, {temp[2]: 1})
+                        except KeyError:
+                            try:
+                                self.gene_multihits[read_name].setdefault(temp[2], 1)
+                            except KeyError:
+                                self.gene_multihits.setdefault(read_name, {temp[2]: 1})
                     else:
                         try:
                             self.observed_counts[read_name] += 1
@@ -277,12 +275,11 @@ class HmmerTime:
                             self.observed_counts.setdefault(read_name, 1)
                         try:
                             self.gene_multihits[read_name][temp[2]] += 1
-                        except (TypeError, KeyError):
-                            self.gene_multihits.setdefault(read_name, {temp[2]: 1})
-                        try:
-                            self.gene_multihit_evalues[read_name][temp[2]] += (temp[12], )
-                        except (TypeError, KeyError):
-                            self.gene_multihit_evalues.setdefault(read_name, {temp[2]: (temp[12], )})
+                        except KeyError:
+                            try:
+                                self.gene_multihits[read_name].setdefault(temp[2], 1)
+                            except KeyError:
+                                self.gene_multihits.setdefault(read_name, {temp[2]: 1})
                     return temp[2], self.hmm_lengths[temp[2]], temp[4], temp[5], temp[11]  # name, len, start, stop, str
         self.hmmer_file.close()  # catch all in case this line is reached
         assert False, 'Should not reach this line'
@@ -295,7 +292,7 @@ class HmmerTime:
         the script.  Note that for this to work, reads must have a unique header in the original fastq/fasta file.
         :return: void
         """
-        print self.hmm_twobytwo['617']
+        #print self.hmm_twobytwo['617']
         for key, subdict in self.gene_multihits.iteritems():
             key = '|'.join(key.split('|')[0:-1])
             if subdict:
@@ -390,7 +387,7 @@ class HmmerTime:
                             else:
                                 self.group_twobytwo[nkey][1] -= nvalue
                                 self.group_twobytwo[nkey][1] += 1
-        print self.hmm_twobytwo['617']
+        #print self.hmm_twobytwo['617']
 
     def calculate_false(self):
         for key, values in self.hmm_twobytwo.iteritems():
@@ -420,19 +417,12 @@ class HmmerTime:
             if self.truthset:
                 self.correct_multihit()
                 self.calculate_false()
-            for key, value in self.hmm_twobytwo.iteritems():
-                if sum(value) > 0 and any(n < 0 for n in value):
-                    print key, value, self.hmm_truth[key]
-            print len(self.debug)
-            print self.clstr_members['617']
-            temp = [self.truthset_counts[x] for x in set(self.debug) if x in self.clstr_members['617']]
-            print temp, sum(temp)
-            print len(self.clstr_members['617'])
-            total = 0
-            for key, subdict in self.gene_multihits.iteritems():  # The error is here
-                if '617' in subdict:
-                    total += 1
-            print total
+            for key, value in self.class_twobytwo.iteritems():
+                if sum(value) > 0:
+                    print key, value, self.class_truth[key]
+            zipped = zip(*[x for x in self.class_twobytwo.itervalues()])
+            print sum(zipped[0]) + sum(zipped[1])
+            print sum(self.class_truth.itervalues())
             #self.write_stats()  # Write the calculated dictionaries to the appropriate files (WIP)
             ## Remember to calculate the true/false negatives here
             ## Also to calculate observed aggregated values
