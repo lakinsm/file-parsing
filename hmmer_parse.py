@@ -150,11 +150,11 @@ class HmmerTime:
                     temp = line.split(',')
                     if temp[0]:
                         self.gene_annots.setdefault(temp[0], temp[1:])
-                        self.class_twobytwo.setdefault(temp[1], [0, 0, 0, 0])
-                        if temp[2]:
-                            self.mech_twobytwo.setdefault(temp[2], [0, 0, 0, 0])
-                        if temp[3]:
-                            self.group_twobytwo.setdefault(temp[3], [0, 0, 0, 0])
+                        # self.class_twobytwo.setdefault(temp[1], [0, 0, 0, 0])
+                        # if temp[2]:
+                        #     self.mech_twobytwo.setdefault(temp[2], [0, 0, 0, 0])
+                        # if temp[3]:
+                        #     self.group_twobytwo.setdefault(temp[3], [0, 0, 0, 0])
             self.hmm_annots = {}  # HMM annotation mapping from key (hmm #) -> annotations
             for key, values in self.clstr_members.iteritems():
                 ## Calculate the annotations of each HMM, combining around a pipe '|' if multiple
@@ -171,27 +171,53 @@ class HmmerTime:
                 ## Generate true counts for each HMM
                 total = sum([int(self.truthset_counts[x]) for x in values if x in self.truthset_counts])
                 self.hmm_truth.setdefault(key, total)
-            for key, value in self.truthset_counts.iteritems():
-                if key in self.gene_annots:
-                    ## Generate true counts for the hierarchy by passing gene name through the annotations dict
-                    if self.gene_annots[key][0]:
-                        class_entry = self.gene_annots[key][0]
-                        try:
-                            self.class_truth[class_entry] += value
-                        except KeyError:
-                            self.class_truth.setdefault(class_entry, value)
-                    if self.gene_annots[key][1]:
-                        mech_entry = self.gene_annots[key][1]
-                        try:
-                            self.mech_truth[mech_entry] += value
-                        except KeyError:
-                            self.mech_truth.setdefault(mech_entry, value)
-                    if self.gene_annots[key][2]:
-                        group_entry = self.gene_annots[key][2]
-                        try:
-                            self.group_truth[group_entry] += value
-                        except KeyError:
-                            self.group_truth.setdefault(group_entry, value)
+            for key, values in self.hmm_truth.iteritems():
+                annots = self.hmm_annots[key]
+                class_annot = annots[0].split('|')
+                mech_annot = annots[1].split('|')
+                group_annot = annots[2].split('|')
+                for entry in class_annot:
+                    try:
+                        list1 = np.array(self.class_truth[entry])
+                        list2 = np.array(values)
+                        self.class_truth[entry] = list1 + (list2 / float(len(class_annot)))
+                    except KeyError:
+                        self.class_truth.setdefault(entry, np.array(values) / float(len(class_annot)))
+                for entry in mech_annot:
+                    try:
+                        list1 = np.array(self.mech_truth[entry])
+                        list2 = np.array(values)
+                        self.mech_truth[entry] = list1 + (list2 / float(len(mech_annot)))
+                    except KeyError:
+                        self.mech_truth.setdefault(entry, np.array(values) / float(len(mech_annot)))
+                for entry in group_annot:
+                    try:
+                        list1 = np.array(self.group_truth[entry])
+                        list2 = np.array(values)
+                        self.group_truth[entry] = list1 + (list2 / float(len(group_annot)))
+                    except KeyError:
+                        self.group_truth.setdefault(entry, np.array(values) / float(len(group_annot)))
+            # for key, values in self.truthset_counts.iteritems():
+            #     if key in self.gene_annots:
+            #         ## Generate true counts for the hierarchy by passing gene name through the annotations dict
+            #         if self.gene_annots[key][0]:
+            #             class_entry = self.gene_annots[key][0]
+            #             try:
+            #                 self.class_truth[class_entry] += value
+            #             except KeyError:
+            #                 self.class_truth.setdefault(class_entry, value)
+            #         if self.gene_annots[key][1]:
+            #             mech_entry = self.gene_annots[key][1]
+            #             try:
+            #                 self.mech_truth[mech_entry] += value
+            #             except KeyError:
+            #                 self.mech_truth.setdefault(mech_entry, value)
+            #         if self.gene_annots[key][2]:
+            #             group_entry = self.gene_annots[key][2]
+            #             try:
+            #                 self.group_truth[group_entry] += value
+            #             except KeyError:
+            #                 self.group_truth.setdefault(group_entry, value)
 
     def __iter__(self):
         return self
@@ -236,30 +262,30 @@ class HmmerTime:
                             self.hmm_twobytwo[temp[2]][1] += 1
                         ## TRUTHSET ENABLED: What category of Group-level two-by-two does this hit fall under?
                         ## Can only calculate TP/FP here; the others are done at the end
-                        hmm_annot = self.hmm_annots[temp[2]]
-                        hmm_groups = hmm_annot[2].split('|')
-                        if temp[0] in self.gene_annots:
-                            gene_group = self.gene_annots[temp[0]][2]
-                            if gene_group and (gene_group in hmm_groups):
-                                self.group_twobytwo[gene_group][0] += 1
-                            elif gene_group and (gene_group not in hmm_groups):
-                                self.group_twobytwo[gene_group][1] += 1
-                            ## TRUTHSET ENABLED: What category of Mechanism-level two-by-two does this hit fall under?
-                            ## Can only calculate TP/FP here; the others are done at the end
-                            hmm_mechs = hmm_annot[1].split('|')
-                            gene_mech = self.gene_annots[temp[0]][1]
-                            if gene_mech and (gene_mech in hmm_mechs):
-                                self.mech_twobytwo[gene_mech][0] += 1
-                            elif gene_mech and (gene_mech not in hmm_mechs):
-                                self.mech_twobytwo[gene_mech][1] += 1
-                            ## TRUTHSET ENABLED: What category of Class-level two-by-two does this hit fall under?
-                            ## Can only calculate TP/FP here; the others are done at the end
-                            hmm_classes = hmm_annot[0].split('|')
-                            gene_class = self.gene_annots[temp[0]][0]
-                            if gene_class and (gene_class in hmm_classes):
-                                self.class_twobytwo[gene_class][0] += 1
-                            elif gene_class and (gene_class not in hmm_classes):
-                                self.class_twobytwo[gene_class][1] += 1
+                        # hmm_annot = self.hmm_annots[temp[2]]
+                        # hmm_groups = hmm_annot[2].split('|')
+                        # if temp[0] in self.gene_annots:
+                        #     gene_group = self.gene_annots[temp[0]][2]
+                        #     if gene_group and (gene_group in hmm_groups):
+                        #         self.group_twobytwo[gene_group][0] += 1
+                        #     elif gene_group and (gene_group not in hmm_groups):
+                        #         self.group_twobytwo[gene_group][1] += 1
+                        #     ## TRUTHSET ENABLED: What category of Mechanism-level two-by-two does this hit fall under?
+                        #     ## Can only calculate TP/FP here; the others are done at the end
+                        #     hmm_mechs = hmm_annot[1].split('|')
+                        #     gene_mech = self.gene_annots[temp[0]][1]
+                        #     if gene_mech and (gene_mech in hmm_mechs):
+                        #         self.mech_twobytwo[gene_mech][0] += 1
+                        #     elif gene_mech and (gene_mech not in hmm_mechs):
+                        #         self.mech_twobytwo[gene_mech][1] += 1
+                        #     ## TRUTHSET ENABLED: What category of Class-level two-by-two does this hit fall under?
+                        #     ## Can only calculate TP/FP here; the others are done at the end
+                        #     hmm_classes = hmm_annot[0].split('|')
+                        #     gene_class = self.gene_annots[temp[0]][0]
+                        #     if gene_class and (gene_class in hmm_classes):
+                        #         self.class_twobytwo[gene_class][0] += 1
+                        #     elif gene_class and (gene_class not in hmm_classes):
+                        #         self.class_twobytwo[gene_class][1] += 1
                         ## TRUTHSET ENABLED: Keep track of whether a gene hits across multiple HMMs
                         try:
                             self.gene_multihits[read_name][temp[2]] += 1
@@ -296,19 +322,19 @@ class HmmerTime:
         for key, subdict in self.gene_multihits.iteritems():
             key = '|'.join(key.split('|')[0:-1])
             if subdict:
-                multiclass = {}
-                multimech = {}
-                multigroup = {}
-                for k, v in subdict.iteritems():
-                    class_annot = self.hmm_annots[k][0].split('|')
-                    for entry in class_annot:
-                        multiclass.setdefault(entry, v)
-                    mech_annot = self.hmm_annots[k][1].split('|')
-                    for entry in mech_annot:
-                        multimech.setdefault(entry, v)
-                    group_annot = self.hmm_annots[k][2].split('|')
-                    for entry in group_annot:
-                        multigroup.setdefault(entry, v)
+                # multiclass = {}
+                # multimech = {}
+                # multigroup = {}
+                # for k, v in subdict.iteritems():
+                #     class_annot = self.hmm_annots[k][0].split('|')
+                #     for entry in class_annot:
+                #         multiclass.setdefault(entry, v)
+                #     mech_annot = self.hmm_annots[k][1].split('|')
+                #     for entry in mech_annot:
+                #         multimech.setdefault(entry, v)
+                #     group_annot = self.hmm_annots[k][2].split('|')
+                #     for entry in group_annot:
+                #         multigroup.setdefault(entry, v)
                 ## Correct for HMM counts
                 if len(subdict) > 1:
                     for nkey, nvalue in subdict.iteritems():
@@ -318,36 +344,37 @@ class HmmerTime:
                         else:
                             self.hmm_twobytwo[nkey][1] -= nvalue
                             self.hmm_twobytwo[nkey][1] += float(nvalue) / sum(subdict.values())
+
                 ## Correct for Class counts
-                if len(multiclass) > 1:
-                    for nkey, nvalue in multiclass.iteritems():
-                        if key in self.gene_annots and self.gene_annots[key][0] and nkey:
-                            if nkey is self.gene_annots[key][0]:
-                                self.class_twobytwo[nkey][0] -= nvalue
-                                self.class_twobytwo[nkey][0] += float(nvalue) / sum(multiclass.values())
-                            else:
-                                self.class_twobytwo[nkey][1] -= nvalue
-                                self.class_twobytwo[nkey][1] += float(nvalue) / sum(multiclass.values())
-                ## Correct for Mech counts
-                if len(multimech) > 1:
-                    for nkey, nvalue in multimech.iteritems():
-                        if key in self.gene_annots and self.gene_annots[key][1] and nkey:
-                            if nkey is self.gene_annots[key][1]:
-                                self.mech_twobytwo[nkey][0] -= nvalue
-                                self.mech_twobytwo[nkey][0] += float(nvalue) / sum(multimech.values())
-                            else:
-                                self.mech_twobytwo[nkey][1] -= nvalue
-                                self.mech_twobytwo[nkey][1] += float(nvalue) / sum(multimech.values())
-                ## Correct for Group counts
-                if len(multigroup) > 1:
-                    for nkey, nvalue in multigroup.iteritems():
-                        if key in self.gene_annots and self.gene_annots[key][2] and nkey:
-                            if nkey is self.gene_annots[key][2]:
-                                self.group_twobytwo[nkey][0] -= nvalue
-                                self.group_twobytwo[nkey][0] += float(nvalue) / sum(multigroup.values())
-                            else:
-                                self.group_twobytwo[nkey][1] -= nvalue
-                                self.group_twobytwo[nkey][1] += float(nvalue) / sum(multigroup.values())
+                # if len(multiclass) > 1:
+                #     for nkey, nvalue in multiclass.iteritems():
+                #         if key in self.gene_annots and self.gene_annots[key][0] and nkey:
+                #             if nkey is self.gene_annots[key][0]:
+                #                 self.class_twobytwo[nkey][0] -= nvalue
+                #                 self.class_twobytwo[nkey][0] += float(nvalue) / sum(multiclass.values())
+                #             else:
+                #                 self.class_twobytwo[nkey][1] -= nvalue
+                #                 self.class_twobytwo[nkey][1] += float(nvalue) / sum(multiclass.values())
+                # ## Correct for Mech counts
+                # if len(multimech) > 1:
+                #     for nkey, nvalue in multimech.iteritems():
+                #         if key in self.gene_annots and self.gene_annots[key][1] and nkey:
+                #             if nkey is self.gene_annots[key][1]:
+                #                 self.mech_twobytwo[nkey][0] -= nvalue
+                #                 self.mech_twobytwo[nkey][0] += float(nvalue) / sum(multimech.values())
+                #             else:
+                #                 self.mech_twobytwo[nkey][1] -= nvalue
+                #                 self.mech_twobytwo[nkey][1] += float(nvalue) / sum(multimech.values())
+                # ## Correct for Group counts
+                # if len(multigroup) > 1:
+                #     for nkey, nvalue in multigroup.iteritems():
+                #         if key in self.gene_annots and self.gene_annots[key][2] and nkey:
+                #             if nkey is self.gene_annots[key][2]:
+                #                 self.group_twobytwo[nkey][0] -= nvalue
+                #                 self.group_twobytwo[nkey][0] += float(nvalue) / sum(multigroup.values())
+                #             else:
+                #                 self.group_twobytwo[nkey][1] -= nvalue
+                #                 self.group_twobytwo[nkey][1] += float(nvalue) / sum(multigroup.values())
                 ## Now correct for within-HMM multihits by reducing any multiple read hits to a single hit
                 if len(subdict) == 1:
                     for nkey, nvalue in subdict.iteritems():
@@ -358,42 +385,73 @@ class HmmerTime:
                             self.hmm_twobytwo[nkey][1] -= nvalue
                             self.hmm_twobytwo[nkey][1] += 1
                 ## Correct for Class counts
-                if len(multiclass) == 1:
-                    for nkey, nvalue in multiclass.iteritems():
-                        if key in self.gene_annots and self.gene_annots[key][0] and nkey:
-                            if nkey is self.gene_annots[key][0]:
-                                self.class_twobytwo[nkey][0] -= nvalue
-                                self.class_twobytwo[nkey][0] += 1
-                            else:
-                                self.class_twobytwo[nkey][1] -= nvalue
-                                self.class_twobytwo[nkey][1] += 1
-                ## Correct for Mech counts
-                if len(multimech) == 1:
-                    for nkey, nvalue in multimech.iteritems():
-                        if key in self.gene_annots and self.gene_annots[key][1] and nkey:
-                            if nkey is self.gene_annots[key][1]:
-                                self.mech_twobytwo[nkey][0] -= nvalue
-                                self.mech_twobytwo[nkey][0] += 1
-                            else:
-                                self.mech_twobytwo[nkey][1] -= nvalue
-                                self.mech_twobytwo[nkey][1] += 1
-                ## Correct for Group counts
-                if len(multigroup) == 1:
-                    for nkey, nvalue in multigroup.iteritems():
-                        if key in self.gene_annots and self.gene_annots[key][2] and nkey:
-                            if nkey is self.gene_annots[key][2]:
-                                self.group_twobytwo[nkey][0] -= nvalue
-                                self.group_twobytwo[nkey][0] += 1
-                            else:
-                                self.group_twobytwo[nkey][1] -= nvalue
-                                self.group_twobytwo[nkey][1] += 1
+                # if len(multiclass) == 1:
+                #     for nkey, nvalue in multiclass.iteritems():
+                #         if key in self.gene_annots and self.gene_annots[key][0] and nkey:
+                #             if nkey is self.gene_annots[key][0]:
+                #                 self.class_twobytwo[nkey][0] -= nvalue
+                #                 self.class_twobytwo[nkey][0] += 1
+                #             else:
+                #                 self.class_twobytwo[nkey][1] -= nvalue
+                #                 self.class_twobytwo[nkey][1] += 1
+                # ## Correct for Mech counts
+                # if len(multimech) == 1:
+                #     for nkey, nvalue in multimech.iteritems():
+                #         if key in self.gene_annots and self.gene_annots[key][1] and nkey:
+                #             if nkey is self.gene_annots[key][1]:
+                #                 self.mech_twobytwo[nkey][0] -= nvalue
+                #                 self.mech_twobytwo[nkey][0] += 1
+                #             else:
+                #                 self.mech_twobytwo[nkey][1] -= nvalue
+                #                 self.mech_twobytwo[nkey][1] += 1
+                # ## Correct for Group counts
+                # if len(multigroup) == 1:
+                #     for nkey, nvalue in multigroup.iteritems():
+                #         if key in self.gene_annots and self.gene_annots[key][2] and nkey:
+                #             if nkey is self.gene_annots[key][2]:
+                #                 self.group_twobytwo[nkey][0] -= nvalue
+                #                 self.group_twobytwo[nkey][0] += 1
+                #             else:
+                #                 self.group_twobytwo[nkey][1] -= nvalue
+                #                 self.group_twobytwo[nkey][1] += 1
         #print self.hmm_twobytwo['617']
+
+    def aggregate_hierarchy(self):
+        for key, values in self.hmm_twobytwo.iteritems():
+            annots = self.hmm_annots[key]
+            class_annot = annots[0].split('|')
+            mech_annot = annots[1].split('|')
+            group_annot = annots[2].split('|')
+            for entry in class_annot:
+                try:
+                    list1 = np.array(self.class_twobytwo[entry])
+                    list2 = np.array(values)
+                    self.class_twobytwo[entry] = list1 + (list2 / float(len(class_annot)))
+                except KeyError:
+                    self.class_twobytwo.setdefault(entry, np.array(values) / float(len(class_annot)))
+            for entry in mech_annot:
+                try:
+                    list1 = np.array(self.mech_twobytwo[entry])
+                    list2 = np.array(values)
+                    self.mech_twobytwo[entry] = list1 + (list2 / float(len(mech_annot)))
+                except KeyError:
+                    self.mech_twobytwo.setdefault(entry, np.array(values) / float(len(mech_annot)))
+            for entry in group_annot:
+                try:
+                    list1 = np.array(self.group_twobytwo[entry])
+                    list2 = np.array(values)
+                    self.group_twobytwo[entry] = list1 + (list2 / float(len(group_annot)))
+                except KeyError:
+                    self.group_twobytwo.setdefault(entry, np.array(values) / float(len(group_annot)))
+
 
     def calculate_false(self):
         for key, values in self.hmm_twobytwo.iteritems():
             if key in self.hmm_truth:
                 values[2] = int(self.hmm_truth[key]) - values[0]
                 values[3] = sum(self.truthset_counts.itervalues()) - sum(values)
+            else:
+                values[2] = 0 - values[0]
         for key, values in self.class_twobytwo.iteritems():
             if key in self.class_truth:
                 values[2] = int(self.class_truth[key]) - values[0]
@@ -416,13 +474,15 @@ class HmmerTime:
                 self.hmmer_file.close()
             if self.truthset:
                 self.correct_multihit()
+                self.aggregate_hierarchy()
                 self.calculate_false()
             for key, value in self.class_twobytwo.iteritems():
                 if sum(value) > 0:
-                    print key, value, self.class_truth[key]
+                    print key, [int(x) for x in value]
             zipped = zip(*[x for x in self.class_twobytwo.itervalues()])
-            print sum(zipped[0]) + sum(zipped[1])
-            print sum(self.class_truth.itervalues())
+            print sum([int(x) for x in zipped[0]]) + sum([int(y) for y in zipped[2]])
+            # print sum(self.class_truth.itervalues())
+            # print sum(self.hmm_truth.itervalues())
             #self.write_stats()  # Write the calculated dictionaries to the appropriate files (WIP)
             ## Remember to calculate the true/false negatives here
             ## Also to calculate observed aggregated values
