@@ -53,7 +53,7 @@ class HmmerTime:
     hash-mapping of header to sequence information.  Only one line will be held in memory at a time using this method.
     The object walks along the file and, if a truthset is provided, outputs two-by-two values for accuracy.
     """
-    def __init__(self, filepath, length, evalue=10, multi=False, truthset=None, clstr_file=None, annot_file=None,):
+    def __init__(self, filepath, outpath, filename, length, evalue=10, multi=False, truthset=None, clstr_file=None, annot_file=None,):
         """
         Constructor; can't touch this.  This is a hellish nightmare of an __init__ function.
         All of sound mind, turn back now.
@@ -72,6 +72,8 @@ class HmmerTime:
             self.stdin = True
         else:
             raise ValueError("Parameter filepath must be a HMMer tblout file")
+        self.outpath = outpath
+        self.filename = filename
         self.reads_mapping = 0
         self.reads_total = 0
         self.ethreshold = float(evalue)
@@ -377,6 +379,19 @@ class HmmerTime:
                 values[2] = int(self.group_truth[key]) - values[0]
                 values[3] = sum(self.truthset_counts.itervalues()) - sum(values)
 
+    def write_twobytwos(self):
+        with open(self.outpath+'/class/'+self.filename) as classfile:
+            classfile.write('Class\tTrue_Positive\tFalse_Positive\tFalse_Negative\tTrue_Negative\n')
+            for key, values in self.class_twobytwo:
+                classfile.write(key+'\t'+'\t'.join(values))
+        with open(self.outpath+'/mechanism/'+self.filename) as mechfile:
+            mechfile.write('Mechanism\tTrue_Positive\tFalse_Positive\tFalse_Negative\tTrue_Negative\n')
+            for key, values in self.mech_twobytwo:
+                mechfile.write(key+'\t'+'\t'.join(values))
+
+    def write_observed(self):
+
+
     def next(self):
         if not self.stdin and type(self.hmmer_file) is str:  # only open file here if hmmer_file is a str and not fileIO
             self.hmmer_file = open(self.hmmer_file, 'r')
@@ -389,17 +404,12 @@ class HmmerTime:
             self.aggregate_hierarchy()
             if self.truthset:
                 self.calculate_false()
-            #     for key, value in self.class_twobytwo.iteritems():
-            #         if sum(value) > 0:
-            #             print key, [int(x) for x in value]
-            #     zipped = zip(*[x for x in self.class_twobytwo.itervalues()])
-            #     print sum([int(x) for x in zipped[0]]) + sum([int(y) for y in zipped[2]])
+                self.write_twobytwos()
+            else:
+                self.write_observed()
             for key, value in self.class_observed.iteritems():
                 if value > 0:
                     print key, value
-            # print sum(self.class_truth.itervalues())
-            # print sum(self.hmm_truth.itervalues())
-            #self.write_stats()  # Write the calculated dictionaries to the appropriate files (WIP)
             raise StopIteration()
         else:
             return value
@@ -409,16 +419,18 @@ class HmmerTime:
 ##############
 ## ArgParse ##
 ##############
-parser = argparse.ArgumentParser('amr_skewness.py')
+parser = argparse.ArgumentParser('hmmer_parse.py')
 parser.add_argument('input', type=str, help='File path to HMMer tblout file, or "-" for stdin')
+parser.add_argument('output', type=str, help='Base directory path for desired outputs (.csv format)')
+parser.add_argument('filename', type=str, help='File name for this particular file')
 parser.add_argument('hmm_len', type=str, help='Path to file containing HMM lengths')
-parser.add_argument('outputfile', type=str, help='File path to desired output file (.csv format)')
 parser.add_argument('graph_dir', type=str, help='Path to output directory for graphs')
 parser.add_argument('clstr', type=str, help='Path to file containing clstr generation info')
 parser.add_argument('annots', type=str, help='Path to annotation file')
 parser.add_argument('-e', '--evalue', type=float, default=10, help='Evalue under which to keep hits')
 parser.add_argument('-t', '--truthset', nargs='?', default=None, help='Path to file containing uniq -c style truth set counts')
 parser.add_argument('-m', '--multicorrect', action='store_true', default=False, help='If set, reads have a one to one mapping with reported hits')
+parser.add_argument('-s', '--skewfile', nargs='?', default=None, help='Optional output file for HMM skewness metrics')
 
 
 ##########
@@ -428,50 +440,58 @@ if __name__ == '__main__':
     ## Parse the arguments using ArgParse
     args = parser.parse_args()
     infile = args.input
-    outfile = args.outputfile
+    outpath = args.outputfile
     graph_dir = args.graph_dir
     if not os.path.isdir(graph_dir):
         os.mkdir(graph_dir)
+    if not os.path.isdir(outpath+'/class'):
+        os.mkdir(outpath+'/class')
+    if not os.path.isdir(outpath+'/mechanism'):
+        os.mkdir(outpath+'/mechanism')
+    if not os.path.isdir(outpath+'/group'):
+        os.mkdir(outpath+'/group')
+    if not os.path.isdir(outpath+'/hmms'):
+        os.mkdir(outpath+'/hmms')
 
     ## Determine alignment positions and overlay the reads onto the gene vectors.
     ## Calculate coverage and measures of skewness.
     ## Output a master file describing each mapped vector/metric and a coverage graph for each mapped gene.
-    with open(outfile, 'w') as out:
-        vector_hash = {}  # This stores gene names that were referenced in the SAM file, along with their vectors
-        vector_counts = {}  # This stores gene names as in the other dictionary, but stores read counts instead
-        for line in HmmerTime(infile, args.hmm_len, args.evalue, args.multicorrect, args.truthset, args.clstr, args.annots):
-            if int(line[2]) < int(line[3]):
-                start = line[2]
-                stop = line[3]
-            else:
-                start = line[3]
-                stop = line[2]
-            try:
-                vector_hash[line[0]][(int(start)-1):(int(stop))] += 1  # increment affected region
-            except KeyError:
-                vector_hash[line[0]] = np.zeros(int(line[1])).astype('int')  # new entry, initialize vector
+    vector_hash = {}  # This stores gene names that were referenced in the SAM file, along with their vectors
+    vector_counts = {}  # This stores gene names as in the other dictionary, but stores read counts instead
+    for line in HmmerTime(infile, outpath, args.filename, args.hmm_len, args.evalue, args.multicorrect, args.truthset, args.clstr, args.annots):
+        if int(line[2]) < int(line[3]):
+            start = line[2]
+            stop = line[3]
+        else:
+            start = line[3]
+            stop = line[2]
+        try:
+            vector_hash[line[0]][(int(start)-1):(int(stop))] += 1  # increment affected region
+        except KeyError:
+            vector_hash[line[0]] = np.zeros(int(line[1])).astype('int')  # new entry, initialize vector
+        if args.skewfile:
+            with open(args.skewfile, 'w') as out:
+                out.write('Accession_Name,Accession_Length,Coverage,Shannon_Entropy,L2norm_Deviation,Vector\n')  # headers for outfile
+                plt.ioff()  # no interactive mode
+                plt.hold(False)  # don't keep plot
+                for key, value in vector_hash.iteritems():
+                    if sum(value > 0):  # if the gene had reads aligned
+                        plot_count += 1
+                        sys.stdout.write("\rPlots generated: {}".format(plot_count))  # update counter for user benefit
+                        sys.stdout.flush()
 
-        # out.write('Accession_Name,Accession_Length,Coverage,Shannon_Entropy,L2norm_Deviation,Vector\n')  # headers for outfile
-        # plt.ioff()  # no interactive mode
-        # plt.hold(False)  # don't keep plot
-        # for key, value in vector_hash.iteritems():
-        #     if sum(value > 0):  # if the gene had reads aligned
-        #         plot_count += 1
-        #         sys.stdout.write("\rPlots generated: {}".format(plot_count))  # update counter for user benefit
-        #         sys.stdout.flush()
-        #
-        #         ## Calculate metrics
-        #         coverage = float(sum(value > 0)) / len(value)  # what percentage of the gene has a read aligned?
-        #         norm_vec = value**float(1) / sum(value)  # normalize so the vector sums to 1 (frequency)
-        #         max_entropy = np.ones(len(norm_vec)) / len(norm_vec)  # this is used to calculate the maximum shannon entropy for a given vector
-        #         shannon = np.negative(sum([x*np.log2(x) for x in norm_vec if x > 0])) / np.negative(sum([x*np.log2(x) for x in max_entropy])) # Shannon entropy
-        #         l2norm = 1 - ((np.sqrt(sum(norm_vec*norm_vec))*np.sqrt(len(norm_vec))) - 1) / (np.sqrt(len(norm_vec)) - 1)  # Deviation from the L2 norm unit sphere
-        #         out.write(",".join([key, str(len(value)), str(coverage), str(shannon), str(l2norm), " ".join([str(x) for x in value])])+'\n')
-        #
-        #         ## Plot figure
-        #         plt.plot(value)
-        #         plt.xlabel('Nucleotide Position')
-        #         plt.ylabel('Observed Count')
-        #         plt.title('Coverage Plot for {}'.format(key))
-        #         plt.savefig(graph_dir+'/'+'{}.png'.format(key))
-        #         plt.close()  # make sure plot is closed
+                        ## Calculate metrics
+                        coverage = float(sum(value > 0)) / len(value)  # what percentage of the gene has a read aligned?
+                        norm_vec = value**float(1) / sum(value)  # normalize so the vector sums to 1 (frequency)
+                        max_entropy = np.ones(len(norm_vec)) / len(norm_vec)  # this is used to calculate the maximum shannon entropy for a given vector
+                        shannon = np.negative(sum([x*np.log2(x) for x in norm_vec if x > 0])) / np.negative(sum([x*np.log2(x) for x in max_entropy])) # Shannon entropy
+                        l2norm = 1 - ((np.sqrt(sum(norm_vec*norm_vec))*np.sqrt(len(norm_vec))) - 1) / (np.sqrt(len(norm_vec)) - 1)  # Deviation from the L2 norm unit sphere
+                        out.write(",".join([key, str(len(value)), str(coverage), str(shannon), str(l2norm), " ".join([str(x) for x in value])])+'\n')
+
+                        ## Plot figure
+                        plt.plot(value)
+                        plt.xlabel('Nucleotide Position')
+                        plt.ylabel('Observed Count')
+                        plt.title('Coverage Plot for {}'.format(key))
+                        plt.savefig(graph_dir+'/'+'{}.png'.format(key))
+                        plt.close()  # make sure plot is closed
