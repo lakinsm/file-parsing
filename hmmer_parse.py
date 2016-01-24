@@ -444,7 +444,7 @@ parser.add_argument('hmm_len', type=str, help='Path to file containing HMM lengt
 parser.add_argument('graph_dir', type=str, help='Path to output directory for graphs')
 parser.add_argument('clstr', type=str, help='Path to file containing clstr generation info')
 parser.add_argument('annots', type=str, help='Path to annotation file')
-parser.add_argument('-e', '--evalue', type=float, default=10, help='Evalue under which to keep hits')
+parser.add_argument('-e', '--evalue', type=float, default=1e-14, help='Evalue under which to keep hits')
 parser.add_argument('-t', '--truthset', nargs='?', default=None,
                     help='Path to file containing uniq -c style truth set counts')
 parser.add_argument('-m', '--multicorrect', action='store_true', default=False,
