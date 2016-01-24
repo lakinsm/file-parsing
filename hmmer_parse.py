@@ -7,22 +7,22 @@ Note: Reads in the original fasta/fastq file MUST have a unique header for this 
 """
 
 # Header values for reference:
-#1 target name
-#2 accession
-#3 query name
-#4 accession
-#5 hmmfrom
-#6 hmm to
-#7 alifrom
-#8 ali to
-#9 envfrom
-#10 env to
-#11 sq len
-#12 strand
-#13 E-value
-#14 score
-#15 bias
-#16 description of target (multi-value)
+# 1 target name
+# 2 accession
+# 3 query name
+# 4 accession
+# 5 hmmfrom
+# 6 hmm to
+# 7 alifrom
+# 8 ali to
+# 9 envfrom
+# 10 env to
+# 11 sq len
+# 12 strand
+# 13 E-value
+# 14 score
+# 15 bias
+# 16 description of target (multi-value)
 
 
 #############
@@ -36,7 +36,6 @@ import re
 import matplotlib as mpl  # load mpl to set the output device, then load pyplot as plt
 mpl.use('Agg')  # No X server running on Bovine, use Agg for png generation instead
 import matplotlib.pyplot as plt
-
 
 ##########
 ## Vars ##
@@ -53,7 +52,9 @@ class HmmerTime:
     hash-mapping of header to sequence information.  Only one line will be held in memory at a time using this method.
     The object walks along the file and, if a truthset is provided, outputs two-by-two values for accuracy.
     """
-    def __init__(self, filepath, outpath, filename, length, evalue=10, multi=False, truthset=None, clstr_file=None, annot_file=None,):
+
+    def __init__(self, filepath, outpath, filename, length, evalue=10, multi=False, truthset=None, clstr_file=None,
+                 annot_file=None, kmer=None):
         """
         Constructor; can't touch this.  This is a hellish nightmare of an __init__ function.
         All of sound mind, turn back now.
@@ -74,6 +75,7 @@ class HmmerTime:
             raise ValueError("Parameter filepath must be a HMMer tblout file")
         self.outpath = outpath
         self.filename = filename
+        self.kmer = kmer
         self.reads_mapping = 0
         self.reads_total = 0
         self.ethreshold = float(evalue)
@@ -380,17 +382,36 @@ class HmmerTime:
                 values[3] = sum(self.truthset_counts.itervalues()) - sum(values)
 
     def write_twobytwos(self):
-        with open(self.outpath+'/class/'+self.filename) as classfile:
-            classfile.write('Class\tTrue_Positive\tFalse_Positive\tFalse_Negative\tTrue_Negative\n')
-            for key, values in self.class_twobytwo:
-                classfile.write(key+'\t'+'\t'.join(values))
-        with open(self.outpath+'/mechanism/'+self.filename) as mechfile:
-            mechfile.write('Mechanism\tTrue_Positive\tFalse_Positive\tFalse_Negative\tTrue_Negative\n')
-            for key, values in self.mech_twobytwo:
-                mechfile.write(key+'\t'+'\t'.join(values))
+        if self.kmer:
+            pathname = self.outpath + '/' + self.kmer + '_' + self.filename + '_%.0e.csv' % self.ethreshold
+        else:
+            pathname = self.outpath + '/' + self.filename + '.csv'
+        with open(pathname, 'w') as twobytwo_file:
+            twobytwo_file.write('Hierarchy,Name,True_Positive,False_Positive,False_Negative,True_Negative\n')
+            for key, values in self.hmm_twobytwo.iteritems():
+                twobytwo_file.write('HMM,' + key + ',' + ','.join([str(x) for x in values]) + '\n')
+            for key, values in self.class_twobytwo.iteritems():
+                twobytwo_file.write('Class,' + key + ',' + ','.join([str(x) for x in values]) + '\n')
+            for key, values in self.mech_twobytwo.iteritems():
+                twobytwo_file.write('Mechanism,' + key + ',' + ','.join([str(x) for x in values]) + '\n')
+            for key, values in self.group_twobytwo.iteritems():
+                twobytwo_file.write('Group,' + key + ',' + ','.join([str(x) for x in values]) + '\n')
 
     def write_observed(self):
-
+        if self.kmer:
+            pathname = self.outpath + '/' + self.kmer + '_' + self.filename + '_%.0e.csv' % self.ethreshold
+        else:
+            pathname = self.outpath + '/' + self.filename + '.csv'
+        with open(pathname, 'w') as observed_file:
+            observed_file.write('Hierarchy,Name,True_Positive,False_Positive,False_Negative,True_Negative\n')
+            for key, values in self.hmm_observed.iteritems():
+                observed_file.write('HMM,' + key + ',' + ','.join([str(x) for x in values]) + '\n')
+            for key, values in self.class_observed.iteritems():
+                observed_file.write('Class,' + key + ',' + ','.join([str(x) for x in values]) + '\n')
+            for key, values in self.mech_observed.iteritems():
+                observed_file.write('Mechanism,' + key + ',' + ','.join([str(x) for x in values]) + '\n')
+            for key, values in self.group_observed.iteritems():
+                observed_file.write('Group,' + key + ',' + ','.join([str(x) for x in values]) + '\n')
 
     def next(self):
         if not self.stdin and type(self.hmmer_file) is str:  # only open file here if hmmer_file is a str and not fileIO
@@ -407,13 +428,9 @@ class HmmerTime:
                 self.write_twobytwos()
             else:
                 self.write_observed()
-            for key, value in self.class_observed.iteritems():
-                if value > 0:
-                    print key, value
             raise StopIteration()
         else:
             return value
-
 
 
 ##############
@@ -421,17 +438,20 @@ class HmmerTime:
 ##############
 parser = argparse.ArgumentParser('hmmer_parse.py')
 parser.add_argument('input', type=str, help='File path to HMMer tblout file, or "-" for stdin')
-parser.add_argument('output', type=str, help='Base directory path for desired outputs (.csv format)')
-parser.add_argument('filename', type=str, help='File name for this particular file')
+parser.add_argument('output', type=str, help='Base directory path for desired outputs')
+parser.add_argument('filename', type=str, help='File name for this particular file (.csv format')
 parser.add_argument('hmm_len', type=str, help='Path to file containing HMM lengths')
 parser.add_argument('graph_dir', type=str, help='Path to output directory for graphs')
 parser.add_argument('clstr', type=str, help='Path to file containing clstr generation info')
 parser.add_argument('annots', type=str, help='Path to annotation file')
 parser.add_argument('-e', '--evalue', type=float, default=10, help='Evalue under which to keep hits')
-parser.add_argument('-t', '--truthset', nargs='?', default=None, help='Path to file containing uniq -c style truth set counts')
-parser.add_argument('-m', '--multicorrect', action='store_true', default=False, help='If set, reads have a one to one mapping with reported hits')
+parser.add_argument('-t', '--truthset', nargs='?', default=None,
+                    help='Path to file containing uniq -c style truth set counts')
+parser.add_argument('-m', '--multicorrect', action='store_true', default=False,
+                    help='If set, reads have a one to one mapping with reported hits')
 parser.add_argument('-s', '--skewfile', nargs='?', default=None, help='Optional output file for HMM skewness metrics')
-
+parser.add_argument('-k', '--kmer', nargs='?', default=None,
+                    help='Optional k-mer length to append to filename for debug or testing purposes')
 
 ##########
 ## Main ##
@@ -440,25 +460,20 @@ if __name__ == '__main__':
     ## Parse the arguments using ArgParse
     args = parser.parse_args()
     infile = args.input
-    outpath = args.outputfile
+    outpath = args.output
     graph_dir = args.graph_dir
     if not os.path.isdir(graph_dir):
         os.mkdir(graph_dir)
-    if not os.path.isdir(outpath+'/class'):
-        os.mkdir(outpath+'/class')
-    if not os.path.isdir(outpath+'/mechanism'):
-        os.mkdir(outpath+'/mechanism')
-    if not os.path.isdir(outpath+'/group'):
-        os.mkdir(outpath+'/group')
-    if not os.path.isdir(outpath+'/hmms'):
-        os.mkdir(outpath+'/hmms')
+    if not os.path.isdir(outpath):
+        os.mkdir(outpath)
 
     ## Determine alignment positions and overlay the reads onto the gene vectors.
     ## Calculate coverage and measures of skewness.
     ## Output a master file describing each mapped vector/metric and a coverage graph for each mapped gene.
     vector_hash = {}  # This stores gene names that were referenced in the SAM file, along with their vectors
     vector_counts = {}  # This stores gene names as in the other dictionary, but stores read counts instead
-    for line in HmmerTime(infile, outpath, args.filename, args.hmm_len, args.evalue, args.multicorrect, args.truthset, args.clstr, args.annots):
+    for line in HmmerTime(infile, outpath, args.filename, args.hmm_len, args.evalue, args.multicorrect, args.truthset,
+                          args.clstr, args.annots, args.kmer):
         if int(line[2]) < int(line[3]):
             start = line[2]
             stop = line[3]
@@ -466,7 +481,7 @@ if __name__ == '__main__':
             start = line[3]
             stop = line[2]
         try:
-            vector_hash[line[0]][(int(start)-1):(int(stop))] += 1  # increment affected region
+            vector_hash[line[0]][(int(start) - 1):(int(stop))] += 1  # increment affected region
         except KeyError:
             vector_hash[line[0]] = np.zeros(int(line[1])).astype('int')  # new entry, initialize vector
         if args.skewfile:
@@ -482,16 +497,19 @@ if __name__ == '__main__':
 
                         ## Calculate metrics
                         coverage = float(sum(value > 0)) / len(value)  # what percentage of the gene has a read aligned?
-                        norm_vec = value**float(1) / sum(value)  # normalize so the vector sums to 1 (frequency)
+                        norm_vec = value ** float(1) / sum(value)  # normalize so the vector sums to 1 (frequency)
                         max_entropy = np.ones(len(norm_vec)) / len(norm_vec)  # this is used to calculate the maximum shannon entropy for a given vector
-                        shannon = np.negative(sum([x*np.log2(x) for x in norm_vec if x > 0])) / np.negative(sum([x*np.log2(x) for x in max_entropy])) # Shannon entropy
-                        l2norm = 1 - ((np.sqrt(sum(norm_vec*norm_vec))*np.sqrt(len(norm_vec))) - 1) / (np.sqrt(len(norm_vec)) - 1)  # Deviation from the L2 norm unit sphere
-                        out.write(",".join([key, str(len(value)), str(coverage), str(shannon), str(l2norm), " ".join([str(x) for x in value])])+'\n')
+                        shannon = np.negative(sum([x * np.log2(x) for x in norm_vec if x > 0])) / np.negative(
+                                sum([x * np.log2(x) for x in max_entropy]))  # Shannon entropy
+                        l2norm = 1 - ((np.sqrt(sum(norm_vec * norm_vec)) * np.sqrt(len(norm_vec))) - 1) / (
+                            np.sqrt(len(norm_vec)) - 1)  # Deviation from the L2 norm unit sphere
+                        out.write(",".join([key, str(len(value)), str(coverage), str(shannon), str(l2norm),
+                                            " ".join([str(x) for x in value])]) + '\n')
 
                         ## Plot figure
                         plt.plot(value)
                         plt.xlabel('Nucleotide Position')
                         plt.ylabel('Observed Count')
                         plt.title('Coverage Plot for {}'.format(key))
-                        plt.savefig(graph_dir+'/'+'{}.png'.format(key))
+                        plt.savefig(graph_dir + '/' + '{}.png'.format(key))
                         plt.close()  # make sure plot is closed
