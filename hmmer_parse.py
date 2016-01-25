@@ -405,13 +405,13 @@ class HmmerTime:
         with open(pathname, 'w') as observed_file:
             observed_file.write('Hierarchy,Name,True_Positive,False_Positive,False_Negative,True_Negative\n')
             for key, values in self.hmm_observed.iteritems():
-                observed_file.write('HMM,' + key + ',' + ','.join([str(x) for x in values]) + '\n')
+                observed_file.write('HMM,' + key + ',' + str(values) + '\n')
             for key, values in self.class_observed.iteritems():
-                observed_file.write('Class,' + key + ',' + ','.join([str(x) for x in values]) + '\n')
+                observed_file.write('Class,' + key + ',' + str(values) + '\n')
             for key, values in self.mech_observed.iteritems():
-                observed_file.write('Mechanism,' + key + ',' + ','.join([str(x) for x in values]) + '\n')
+                observed_file.write('Mechanism,' + key + ',' + str(values) + '\n')
             for key, values in self.group_observed.iteritems():
-                observed_file.write('Group,' + key + ',' + ','.join([str(x) for x in values]) + '\n')
+                observed_file.write('Group,' + key + ',' + str(values) + '\n')
 
     def next(self):
         if not self.stdin and type(self.hmmer_file) is str:  # only open file here if hmmer_file is a str and not fileIO
