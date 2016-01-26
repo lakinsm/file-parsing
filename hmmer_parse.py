@@ -403,7 +403,7 @@ class HmmerTime:
         else:
             pathname = self.outpath + '/' + self.filename + '.csv'
         with open(pathname, 'w') as observed_file:
-            observed_file.write('Hierarchy,Name,True_Positive,False_Positive,False_Negative,True_Negative\n')
+            observed_file.write('Hierarchy,Name,Abundance\n')
             for key, values in self.hmm_observed.iteritems():
                 observed_file.write('HMM,' + key + ',' + str(values) + '\n')
             for key, values in self.class_observed.iteritems():
