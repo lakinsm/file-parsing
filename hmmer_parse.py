@@ -37,6 +37,7 @@ import matplotlib as mpl  # load mpl to set the output device, then load pyplot 
 mpl.use('Agg')  # No X server running on Bovine, use Agg for png generation instead
 import matplotlib.pyplot as plt
 
+
 ##########
 ## Vars ##
 ##########
@@ -54,7 +55,7 @@ class HmmerTime:
     """
 
     def __init__(self, filepath, outpath, filename, length, evalue=10, multi=False, truthset=None, clstr_file=None,
-                 annot_file=None, kmer=None):
+                 annot_file=None, kmer=None, resfams=None):
         """
         Constructor; can't touch this.  This is a hellish nightmare of an __init__ function.
         All of sound mind, turn back now.
@@ -80,6 +81,7 @@ class HmmerTime:
         self.reads_total = 0
         self.ethreshold = float(evalue)
         self.multicorrect = multi
+        self.resfams = resfams
         self.hmm_observed = {}  # Mapping of HMMs to hits observed
         self.class_observed = {}  # Mapping of Classes to hits observed
         self.mech_observed = {}  # Mapping of Mechanisms to hits observed
@@ -130,6 +132,15 @@ class HmmerTime:
             mechs = [x for x in mechs if x]
             groups = [x for x in groups if x]
             self.hmm_annots.setdefault(key, ['|'.join(set(classes)), '|'.join(set(mechs)), '|'.join(set(groups))])
+        if resfams:
+            self.resfams_annots = {}  # Annotations for ResFams
+            self.rf_class_observed = {}
+            with open(resfams, 'r') as rf:
+                ## Read in ResFams metadata and map Resfam ID to annotations
+                data = rf.read().replace('\r', '').rstrip().split('\n')[1:]
+                for line in data:
+                    temp = line.split('\t')
+                    self.resfams_annots.setdefault(temp[0], temp[1:])
         if truthset:
             ## This section is complicated.  To calculate two-by-twos, we need to keep track of several things:
             ## 1. The true number of reads that map to a given gene from the test set
@@ -214,11 +225,26 @@ class HmmerTime:
                     sys.stdout.flush()
                 temp = hmmer_line.split()
                 read_name = temp[0]
-                temp[0] = '|'.join(temp[0].split('|')[:-1])  # This is a predetermined format correction for testset
-                if float(temp[12]) < float(self.ethreshold):
+                if self.resfams:
+                    if float(temp[4]) <= float(self.ethreshold):
+                        self.reads_mapping += 1
+                        ## Resfams needs its own indices since the output of hmmsearch is different than nhmmer
+                        try:
+                            self.hmm_observed[temp[3]] += 1
+                        except KeyError:
+                            self.hmm_observed.setdefault(temp[3], 1)
+                        try:
+                            self.gene_multihits[read_name][temp[3]] += 1
+                        except KeyError:
+                            try:
+                                self.gene_multihits[read_name].setdefault(temp[3], 1)
+                            except KeyError:
+                                self.gene_multihits.setdefault(read_name, {temp[3]: 1})
+                elif float(temp[12]) <= float(self.ethreshold):
                     self.reads_mapping += 1
                     ## Basic observation increment rules
                     if self.truthset:
+                        temp[0] = '|'.join(temp[0].split('|')[:-1])  # This is a predetermined format correction for testset
                         ## TRUTHSET ENABLED: What category of HMM-level two-by-two does this hit fall under?
                         ## Can only calculate TP/FP here; the others are done at the end
                         if temp[0] in self.clstr_members[temp[2]]:
@@ -355,6 +381,21 @@ class HmmerTime:
                     except KeyError:
                         self.group_observed.setdefault(entry, value / float(len(group_annot)))
 
+    def aggregate_resfams(self):
+        """
+        Aggregate the counts for the Resfams HMMs.  This is based on a modified metadata file that was hand annotated
+        to match up with the MEG HMM annotations.
+        :return: void
+        """
+        for key, value in self.hmm_observed.iteritems():
+            annots = self.resfams_annots[key]
+            class_annot = annots[0]
+            if class_annot != 'NA':
+                try:
+                    self.rf_class_observed[class_annot] += value
+                except KeyError:
+                    self.rf_class_observed.setdefault(class_annot, value)
+
     def calculate_false(self):
         """
         This function is only utilized when a truthset is provided; it calculates the True/False negatives
@@ -382,6 +423,11 @@ class HmmerTime:
                 values[3] = sum(self.truthset_counts.itervalues()) - sum(values)
 
     def write_twobytwos(self):
+        """
+        If a truth set was provided, use this function to output the contingency tables for each hierarchy of
+        annotations.
+        :return: void
+        """
         if self.kmer:
             pathname = self.outpath + '/' + self.kmer + '_' + self.filename + '_%.0e.csv' % self.ethreshold
         else:
@@ -398,6 +444,11 @@ class HmmerTime:
                 twobytwo_file.write('Group,' + key + ',' + ','.join([str(x) for x in values]) + '\n')
 
     def write_observed(self):
+        """
+        If no truth set was provided, simply output the counts (or corrected counts) to the output file based on the
+        MEG hierarchy of annotations.  This only works with the MEG HMMs.
+        :return: void
+        """
         if self.kmer:
             pathname = self.outpath + '/' + self.kmer + '_' + self.filename + '_%.0e.csv' % self.ethreshold
         else:
@@ -413,6 +464,21 @@ class HmmerTime:
             for key, values in self.group_observed.iteritems():
                 observed_file.write('Group,' + key + ',' + str(values) + '\n')
 
+    def write_resfams(self):
+        """
+        If a resfams metadata file was provided (and the input is from the Resfams HMMs), then output counts of
+        HMM hits to the Resfams models and the class annotation.  The class annotations were hand-modified by the
+        MEG Lab and shouldn't be considered an official part of Resfams.
+        :return: void
+        """
+        pathname = self.outpath + '/' + self.filename + '.csv'
+        with open(pathname, 'w') as rf_file:
+            rf_file.write('Hierarchy,Name,Abundance')
+            for key, values in self.hmm_observed.iteritems():
+                rf_file.write('RF_HMM,' + key + ',' + str(values) + '\n')
+            for key, values in self.rf_class_observed.iteritems():
+                rf_file.write('RF_Class,' + key + ',' + str(values) + '\n')
+
     def next(self):
         if not self.stdin and type(self.hmmer_file) is str:  # only open file here if hmmer_file is a str and not fileIO
             self.hmmer_file = open(self.hmmer_file, 'r')
@@ -422,10 +488,15 @@ class HmmerTime:
                 self.hmmer_file.close()
             if self.multicorrect:
                 self.correct_multihit()
-            self.aggregate_hierarchy()
+            if self.resfams:
+                self.aggregate_resfams()
+            else:
+                self.aggregate_hierarchy()
             if self.truthset:
                 self.calculate_false()
                 self.write_twobytwos()
+            elif self.resfams:
+                self.write_resfams()
             else:
                 self.write_observed()
             raise StopIteration()
@@ -452,6 +523,8 @@ parser.add_argument('-m', '--multicorrect', action='store_true', default=False,
 parser.add_argument('-s', '--skewfile', nargs='?', default=None, help='Optional output file for HMM skewness metrics')
 parser.add_argument('-k', '--kmer', nargs='?', default=None,
                     help='Optional k-mer length to append to filename for debug or testing purposes')
+parser.add_argument('-r', '--resfams', nargs='?', default=None,
+                    help='Optional input file for resfams metadata.  If set, input is resfams tblout.scan file')
 
 ##########
 ## Main ##
@@ -462,8 +535,9 @@ if __name__ == '__main__':
     infile = args.input
     outpath = args.output
     graph_dir = args.graph_dir
-    if not os.path.isdir(graph_dir):
-        os.mkdir(graph_dir)
+    if args.skewfile:
+        if not os.path.isdir(graph_dir):
+            os.mkdir(graph_dir)
     if not os.path.isdir(outpath):
         os.mkdir(outpath)
 
@@ -473,7 +547,9 @@ if __name__ == '__main__':
     vector_hash = {}  # This stores gene names that were referenced in the SAM file, along with their vectors
     vector_counts = {}  # This stores gene names as in the other dictionary, but stores read counts instead
     for line in HmmerTime(infile, outpath, args.filename, args.hmm_len, args.evalue, args.multicorrect, args.truthset,
-                          args.clstr, args.annots, args.kmer):
+                          args.clstr, args.annots, args.kmer, args.resfams):
+        if not line:
+            continue
         if int(line[2]) < int(line[3]):
             start = line[2]
             stop = line[3]
@@ -485,6 +561,7 @@ if __name__ == '__main__':
         except KeyError:
             vector_hash[line[0]] = np.zeros(int(line[1])).astype('int')  # new entry, initialize vector
         if args.skewfile:
+            ## If skewness metrics are to be written, calculate the entropy measures and output coverage plots.
             with open(args.skewfile, 'w') as out:
                 out.write('Accession_Name,Accession_Length,Coverage,Shannon_Entropy,L2norm_Deviation,Vector\n')  # headers for outfile
                 plt.ioff()  # no interactive mode
@@ -500,9 +577,9 @@ if __name__ == '__main__':
                         norm_vec = value ** float(1) / sum(value)  # normalize so the vector sums to 1 (frequency)
                         max_entropy = np.ones(len(norm_vec)) / len(norm_vec)  # this is used to calculate the maximum shannon entropy for a given vector
                         shannon = np.negative(sum([x * np.log2(x) for x in norm_vec if x > 0])) / np.negative(
-                                sum([x * np.log2(x) for x in max_entropy]))  # Shannon entropy
+                                sum([x * np.log2(x) for x in max_entropy]))  # % of max possible Shannon entropy
                         l2norm = 1 - ((np.sqrt(sum(norm_vec * norm_vec)) * np.sqrt(len(norm_vec))) - 1) / (
-                            np.sqrt(len(norm_vec)) - 1)  # Deviation from the L2 norm unit sphere
+                            np.sqrt(len(norm_vec)) - 1)  # % of max possible conformity to the L2 norm unit sphere
                         out.write(",".join([key, str(len(value)), str(coverage), str(shannon), str(l2norm),
                                             " ".join([str(x) for x in value])]) + '\n')
 
