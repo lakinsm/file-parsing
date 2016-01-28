@@ -454,15 +454,15 @@ class HmmerTime:
         else:
             pathname = self.outpath + '/' + self.filename + '.csv'
         with open(pathname, 'w') as observed_file:
-            observed_file.write('Hierarchy,Name,Abundance\n')
+            observed_file.write('Hierarchy,Name,Abundance,E-value\n')
             for key, values in self.hmm_observed.iteritems():
-                observed_file.write('HMM,' + key + ',' + str(values) + '\n')
+                observed_file.write('HMM,' + key + ',' + str(values) + ',' + str(self.ethreshold) + '\n')
             for key, values in self.class_observed.iteritems():
-                observed_file.write('Class,' + key + ',' + str(values) + '\n')
+                observed_file.write('Class,' + key + ',' + str(values) + ',' + str(self.ethreshold) + '\n')
             for key, values in self.mech_observed.iteritems():
-                observed_file.write('Mechanism,' + key + ',' + str(values) + '\n')
+                observed_file.write('Mechanism,' + key + ',' + str(values) + ',' + str(self.ethreshold) + '\n')
             for key, values in self.group_observed.iteritems():
-                observed_file.write('Group,' + key + ',' + str(values) + '\n')
+                observed_file.write('Group,' + key + ',' + str(values) + ',' + str(self.ethreshold) + '\n')
 
     def write_resfams(self):
         """
@@ -473,11 +473,11 @@ class HmmerTime:
         """
         pathname = self.outpath + '/' + self.filename + '.csv'
         with open(pathname, 'w') as rf_file:
-            rf_file.write('Hierarchy,Name,Abundance')
+            rf_file.write('Hierarchy,Name,Abundance,E-value')
             for key, values in self.hmm_observed.iteritems():
-                rf_file.write('RF_HMM,' + key + ',' + str(values) + '\n')
+                rf_file.write('RF_HMM,' + key + ',' + str(values) + ',' + str(self.ethreshold) + '\n')
             for key, values in self.rf_class_observed.iteritems():
-                rf_file.write('RF_Class,' + key + ',' + str(values) + '\n')
+                rf_file.write('RF_Class,' + key + ',' + str(values) + ',' + str(self.ethreshold) + '\n')
 
     def next(self):
         if not self.stdin and type(self.hmmer_file) is str:  # only open file here if hmmer_file is a str and not fileIO
