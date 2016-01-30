@@ -9,7 +9,7 @@ infile = '/s/bovine/index/databases/resistance_databases/analyze/lakinsm/hmm/cls
 outdir = '/s/bovine/index/databases/resistance_databases/analyze/lakinsm/hmm/fasta/'
 database = '/s/bovine/index/databases/resistance_databases/analyze/lakinsm/hmm/final_hmmer_templates.fasta'
 lite = '/s/bovine/index/databases/resistance_databases/analyze/lakinsm/hmm/low_freq_hmm_names.txt'
-litedir = '/s/bovine/index/databases/resistance_databases/analyze/lakinsm/lite_fasta/'
+litedir = '/s/bovine/index/databases/resistance_databases/analyze/lakinsm/hmm/lite_fasta/'
 
 
 def fastaParse(infile):
@@ -46,7 +46,8 @@ def separate_clusters():
     header_reg = re.compile(r'>(.+?)\.\.\.')
     with open(infile, 'r') as f, open(singletons, 'w') as s, open(lite, 'r') as hmmlite:
         dbdata = {header: seq for header, seq in fastaParse(database)}
-        lite_hmms = hmmlite.read().split('\n')
+        lite_hmms = [int(x) for x in hmmlite.read().split('\n') if x]
+        print(len(lite_hmms))
         line = f.readline()
         while line:
             if line[0] is ">":
@@ -60,13 +61,15 @@ def separate_clusters():
                         with open(outdir + str(cluster_num - 1) + '.fasta', 'w') as out:
                             for header in clstr:
                                 out.write('>' + header + '\n' + dbdata[header] + '\n')
-                            if cluster_num not in lite_hmms:
+                            if cluster_num - 1 not in lite_hmms:
                                 with open(litedir + str(cluster_num - 1) + '.fasta', 'w') as outlite:
-                                    outlite.write('>' + header + '\n' + dbdata[header] + '\n')
+                                    for header in clstr:
+                                        outlite.write('>' + header + '\n' + dbdata[header] + '\n')
                             clstr = []
             else:
                 clstr.append(header_reg.findall(line)[0])
             line = f.readline()
+        print(cluster_num)
 
 
 if __name__ == '__main__':
