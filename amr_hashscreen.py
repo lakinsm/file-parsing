@@ -1,9 +1,8 @@
 #!/usr/bin/env python
 
-""" Hash the 20-mers of a given database (AMR in our case) into a set.  Screen the reads in a fastq file against
-the database hash table using each 20-mer in a sliding window along the read.  If any 20-mer hits the hash table,
-then the read passes filter; forward and backward orientations are checked.  All hashes are implemented in bit form:
-A, C, G, T = { 00, 01, 10, 11 }
+""" Hash the k-mers of a given database (AMR in our case) into a set.  Screen the reads in a fastq file against
+the database hash table using each k-mer in a sliding window along the read.  If any k-mer hits the hash table,
+then the read passes filter; forward and backward orientations are hashed.
 """
 
 ## Fastq format for reference:
@@ -47,8 +46,8 @@ def worker(chunk):
     global db_hash
     for read_name, seq in chunk:
         global window
-        for i in range(len(seq)-window):
-            subseq = seq[i:i+window]
+        for i in range(len(seq) - window + 1):
+            subseq = seq[i:i + window]
             if subseq in db_hash:
                 logging.info('>'+read_name+'\n'+seq)
                 break
@@ -165,8 +164,8 @@ if __name__ == '__main__':
     else:
         db_fasta = [x[1] for x in fasta_parse(args.database)]
         for seq in db_fasta:
-            for i in range(len(seq)-window):
-                temp = seq[i:i+window]
+            for i in range(len(seq) - window + 1):
+                temp = seq[i:i + window]
                 db_hash.add(temp)
                 db_hash.add(temp[::-1])
 
