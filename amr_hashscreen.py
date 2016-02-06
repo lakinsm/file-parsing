@@ -61,6 +61,7 @@ def worker(chunk):
                 else:
                     logging.info('>' + seq + '\n' + seq)
                 break
+    return collections.Counter(barray)
 
 
 def fastq_parse():
