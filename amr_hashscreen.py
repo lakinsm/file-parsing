@@ -53,11 +53,13 @@ def worker(chunk):
             subseq = seq[i:i + window]
             if subseq in db_hash:
                 if args.unique:
-                    if any([x in seq for x in iupac]):
+                    try:
+                        bits = encode(seq)
+                        barray += (bits, )
+                    except KeyError:
                         logging.info('>' + seq + '\n' + seq)
                         break
-                    bits = encode(seq)
-                    barray += (bits, )
+
                 else:
                     logging.info('>' + seq + '\n' + seq)
                 break
