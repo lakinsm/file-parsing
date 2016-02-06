@@ -57,7 +57,7 @@ def worker(chunk):
                         logging.info('>' + seq + '\n' + seq)
                         break
                     bits = encode(seq)
-                    barray += bits
+                    barray += (bits, )
                 else:
                     logging.info('>' + seq + '\n' + seq)
                 break
