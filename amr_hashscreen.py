@@ -29,7 +29,8 @@ chunksize = 20000000  # limit memory consumption by reading in blocks
 window = 20  # k-mer size
 overall = 0  # counter for stderr writing
 acgt_encoding_table = {}  # DNA encoding table
-acgt_decoding_table = {}
+acgt_decoding_table = {}  # DNA decoding table
+iupac = 'RYSWKMBDHVN'  # the DNA encoding algorithm only handles standard base codes
 
 
 #############
@@ -49,6 +50,9 @@ def worker(chunk):
         for i in range(len(seq) - window + 1):
             subseq = seq[i:i + window]
             if subseq in db_hash:
+                if any([x in seq for x in iupac]):
+                    logging.info('>' + seq + '\n' + seq)
+                    break
                 bits = encode(seq)
                 if bits not in uniq_hash:
                     uniq_hash[bits] = uniq_hash.get(bits, 0) + 1
