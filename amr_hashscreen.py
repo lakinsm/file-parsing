@@ -7,12 +7,6 @@ then the read passes filter; forward and backward orientations are hashed.
 Credit for the compression algorithm code blocks goes to Cathal Garvey (https://github.com/cathalgarvey/dncode.git)
 """
 
-## Fastq format for reference:
-# @HWI-ST916:307:C6039ACXX:5:1101:1242:2102 1:N:0:CGATGT
-# TTGAAGCTTGGTGAGTTTGCCCCAACAAGAACTTTCCGTGGGCATGGAGGAGCAAAATCAACCGCTCCGGCACCGAAGAAGTAGGAGGGACATATGGCTA
-# +
-# BBBFFFFFFFFFFIIFIIIIIIIIFIIIIIIIIIIIIIFFIIIIIIIIIIIIIIIIIIIIFFFFFFFFFFFFFFFBFFFFFBBFFFFFFFFBFFFFFFFB
-
 
 #############
 ## Imports ##
@@ -24,7 +18,6 @@ import sys
 import logging
 import resource
 import itertools
-import codecs
 
 
 ##########
@@ -36,6 +29,7 @@ chunksize = 20000000  # limit memory consumption by reading in blocks
 window = 20  # k-mer size
 overall = 0  # counter for stderr writing
 acgt_encoding_table = {}  # DNA encoding table
+acgt_decoding_table = {}
 
 
 #############
@@ -178,7 +172,7 @@ def iter_encode(code_iter, table = acgt_encoding_table, rna=False):
     # NoneType values are yielded from the zip_longest iterator.
     fr1, fr2, fr3, fr4 = [itertools.islice(code_iter, i, None, 4) for i in range(4)]
     framezip = itertools.zip_longest(fr1,fr2,fr3,fr4)
-    zip_quads = map(lambda t:''.join(filter(None,t)), framezip)
+    zip_quads = map(lambda t: ''.join(filter(None,t)), framezip)
     seql = 0
     for quad in zip_quads:
         try:
@@ -195,8 +189,50 @@ def iter_encode(code_iter, table = acgt_encoding_table, rna=False):
         yield enc_dna
     else:
         # Generate and yield final byte.
-        mask = (4 - len(quad)) % 4 # Can only be 0-3, leaving unused byte-space..
+        mask = (4 - len(quad)) % 4  # Can only be 0-3, leaving unused byte-space..
         yield get_encbyte(mask, rna)
+
+
+def decode_encbyte(encbyte):
+    """
+    By Cathal Garvey (https://github.com/cathalgarvey/dncode.git)
+    Decodes a byte as encoded by get_encbyte.
+    """
+    #encbyte = int.from_byte(encbyte, 'big') # Be explicit on endianness
+    if isinstance(encbyte, bytes):
+        if not len(encbyte) == 1:
+            raise ValueError("encbyte MAY be bytes, but must be length 1!")
+        else:
+            encbyte = int.from_bytes(encbyte, "big")
+    if (not isinstance(encbyte, int)) or encbyte > 255:
+        raise TypeError("decode_encbyte only accepts a single byte or a byte-size int. "
+                        "Value given was of type {} and value {}.".format(type(encbyte), encbyte))
+    return dict(
+        mask_len=encbyte & 3,
+        rna=True if encbyte & 1 << 2 else False,
+        gzipped=True if encbyte & 1 << 3 else False )
+
+
+def iter_decode(enc_dna, encoding, table=acgt_decoding_table):
+    """
+    By Cathal Garvey (https://github.com/cathalgarvey/dncode.git)
+    Returns an iterator to decode the input sequence or iterator over a sequence.
+    """
+    table = table.copy()
+    if encoding['rna']:
+        for k in table:
+            table[k] = table[k].replace("T", "U")
+    for b in enc_dna:
+        yield table[b.to_bytes(1, 'big')]
+
+
+def decode_all(enccode):
+    """
+    By Cathal Garvey (https://github.com/cathalgarvey/dncode.git)
+    Straight decode of a sequence. Does not support iterators.
+    """
+    return ''.join(iter_decode(enccode[:-1], decode_encbyte(enccode[-1])))
+
 
 
 ##############
@@ -262,6 +298,7 @@ if __name__ == '__main__':
         for n, n4 in enumerate((''.join(x) for x in itertools.product(*('ACGT',) * 4))):
             nb = n.to_bytes(1, 'big')
             acgt_encoding_table[n4] = nb
+            acgt_decoding_table[nb] = n4
 
     ## Read in each fastq chunk and check for membership.  Chunk size should be set such that
     ## the block size doesn't overflow memory.  Keep in mind this block size has the potential to be doubled
