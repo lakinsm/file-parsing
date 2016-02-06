@@ -1,8 +1,10 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 """ Hash the k-mers of a given database (AMR in our case) into a set.  Screen the reads in a fastq file against
 the database hash table using each k-mer in a sliding window along the read.  If any k-mer hits the hash table,
 then the read passes filter; forward and backward orientations are hashed.
+
+Credit for the compression algorithm code blocks goes to Cathal Garvey (https://github.com/cathalgarvey/dncode.git)
 """
 
 ## Fastq format for reference:
@@ -16,20 +18,24 @@ then the read passes filter; forward and backward orientations are hashed.
 ## Imports ##
 #############
 import argparse
-import cPickle as pickle
+import pickle
 import multiprocessing as mp
 import sys
 import logging
 import resource
+import itertools
+import codecs
 
 
 ##########
 ## Vars ##
 ##########
 db_hash = set()  # object for the hash table
+uniq_hash = mp.Manager().dict()  # thread-locked dictionary for workers
 chunksize = 20000000  # limit memory consumption by reading in blocks
 window = 20  # k-mer size
 overall = 0  # counter for stderr writing
+acgt_encoding_table = {}  # DNA encoding table
 
 
 #############
@@ -49,7 +55,12 @@ def worker(chunk):
         for i in range(len(seq) - window + 1):
             subseq = seq[i:i + window]
             if subseq in db_hash:
-                logging.info('>'+read_name+'\n'+seq)
+                bits = encode(seq)
+                if bits not in uniq_hash:
+                    uniq_hash[bits] = uniq_hash.get(bits, 0) + 1
+                    logging.info('>' + seq + '\n' + seq)
+                else:
+                    uniq_hash[bits] = uniq_hash.get(bits, 0) + 1
                 break
 
 
@@ -108,8 +119,8 @@ def split(a, n):
     :param n: number of groups to split into
     :return: generator of chunks
     """
-    k, m = len(a) / n, len(a) % n
-    return (a[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in xrange(n))
+    k, m = int(len(a) / n), len(a) % n
+    return (a[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(n))
 
 
 def current_mem_usage():
@@ -119,15 +130,86 @@ def current_mem_usage():
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
 
 
+def get_encbyte(mask_len, rna=False, gzipped=False):
+    """
+    By Cathal Garvey (https://github.com/cathalgarvey/dncode.git)
+    The final byte of an encoded sequence is of form (binary):
+    |unused|unused|unused|unused|gzipped|rna|mask|mask|
+    ..that is, the length of the final n-quad mask is obtained using only
+    the final two bits of the mask, and the third-last bit is 1 if RNA, 0 else.
+    The remaining 5 bits are unspecified at present.
+    """
+    if not 0 <= mask_len <= 3:
+        raise ValueError("Mask length can only be 0-3.")
+    mask  = 0
+    mask |= mask_len
+    if rna:
+        mask |= 1<<2
+    if gzipped:
+        mask |= 1<<3
+    return mask.to_bytes(1, 'big')
+
+
+def encode(code, rna=False):
+    """
+    By Cathal Garvey (https://github.com/cathalgarvey/dncode.git)
+    Outputs a bytestring consisting of the encoded DNA, plus a mask byte.
+    The encoding is static 4:1 compression, with quadrets of DNA translating to
+    single-byte values evenly.
+    The last encoded byte may be padded to permit encoding. To account for this
+    a "mask" byte is always appended to the sequence, which consists simply of
+    a big-endian integer specifying which of the last 4n are padding to be
+    discarded on decoding. There is extra "room" in this last byte for other
+    formatting details, such as alphabet, as a future improvement.
+    """
+    # Iterate over the Dut DNA in four-letter chunks, maybe plus trailing.
+    return b''.join(iter_encode(code, rna=rna))
+
+
+def iter_encode(code_iter, table = acgt_encoding_table, rna=False):
+    """
+    By Cathal Garvey (https://github.com/cathalgarvey/dncode.git)
+    Iterates over sequences, preventing large sequence files being loaded into RAM.
+    Yields encoded sequence bytes plus final encoding byte.
+    """
+    # Create four iterators; one for each of four frames to iterate in steps of four.
+    # Then zip these frames and use map to combine them into quadlets. Using
+    # filter in the arguments to 'join' prevents a TypeError on last block if any
+    # NoneType values are yielded from the zip_longest iterator.
+    fr1, fr2, fr3, fr4 = [itertools.islice(code_iter, i, None, 4) for i in range(4)]
+    framezip = itertools.zip_longest(fr1,fr2,fr3,fr4)
+    zip_quads = map(lambda t:''.join(filter(None,t)), framezip)
+    seql = 0
+    for quad in zip_quads:
+        try:
+            enc_dna = acgt_encoding_table[quad]
+            seql += 4
+        except KeyError as E:
+            # Should only evaluate on last quad, making all preceding lookups faster.
+            # TODO: Make at least a token effort to ensure it's not a real KeyError.
+            if len(quad) < 4:
+                enc_dna = acgt_encoding_table[ quad + ( "A" * (4 - len(quad)) ) ]
+                seql += len(quad)
+            else:
+                raise E
+        yield enc_dna
+    else:
+        # Generate and yield final byte.
+        mask = (4 - len(quad)) % 4 # Can only be 0-3, leaving unused byte-space..
+        yield get_encbyte(mask, rna)
+
+
 ##############
 ## ArgParse ##
 ##############
 parser = argparse.ArgumentParser('amr_skewness.py')
-parser.add_argument('-d', '--database', nargs='?', default=None, help='File path to fasta database if new hash')
-parser.add_argument('-p', '--pickle', nargs='?', default=None, help='Optional flag: database is a pickled hash table')
-parser.add_argument('-s', '--save', nargs='?', default=None, help='Optional: save the hash table to a pickle file')
+parser.add_argument('-d', '--database', type=str, default=None, help='File path to fasta database if new hash')
+parser.add_argument('-p', '--pickle', type=str, default=None, help='Optional flag: database is a pickled hash table')
+parser.add_argument('-s', '--save', type=str, default=None, help='Optional: save the hash table to a pickle file')
 parser.add_argument('-n', '--num_process', type=int, default=1, help='Number of processes to run in parallel')
 parser.add_argument('-k', '--kmer', type=int, default=15, help='K-mer size')
+parser.add_argument('-u', '--unique', type=str, default=None,
+                    help='File to store hashes of unique read counts for HMMER (use for highly redundant fastq files)')
 
 
 ##########
@@ -173,6 +255,14 @@ if __name__ == '__main__':
     if args.save:
         pickle.dump(db_hash, open(args.save, 'wb'))
 
+    ## If --unique is set, then create the DNA encoding table for compression of unique hashes
+    ## See file header for credit to Cathal Garvey for the compression algorithm
+    # For every four-letter combination of ACGT (256 possibilities):
+    if args.unique:
+        for n, n4 in enumerate((''.join(x) for x in itertools.product(*('ACGT',) * 4))):
+            nb = n.to_bytes(1, 'big')
+            acgt_encoding_table[n4] = nb
+
     ## Read in each fastq chunk and check for membership.  Chunk size should be set such that
     ## the block size doesn't overflow memory.  Keep in mind this block size has the potential to be doubled
     ## in the logging cache.  Chunksize is set to 20 million reads for Bovine.
@@ -199,4 +289,13 @@ if __name__ == '__main__':
             pool.terminate()  # sigkill
             del pool  # make sure pool is cleared
             break
+    sys.stderr.write('\nTotal reads processed {}'.format(overall))
+
+    ## Write to duplicate mapping file if --unique flag is set
+    if args.unique:
+        sys.stderr.write('\nWriting duplicate hash values\n')
+        with open(args.unique, 'wb') as dupfile:
+            for key, value in uniq_hash.items():
+                if value > 1:
+                    dupfile.write(key + b'\@@' + value.to_bytes(4, 'big') + b'\..')
 
