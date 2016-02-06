@@ -50,15 +50,18 @@ def worker(chunk):
         for i in range(len(seq) - window + 1):
             subseq = seq[i:i + window]
             if subseq in db_hash:
-                if any([x in seq for x in iupac]):
-                    logging.info('>' + seq + '\n' + seq)
-                    break
-                bits = encode(seq)
-                if bits not in uniq_hash:
-                    uniq_hash[bits] = uniq_hash.get(bits, 0) + 1
-                    logging.info('>' + seq + '\n' + seq)
+                if args.unique:
+                    if any([x in seq for x in iupac]):
+                        logging.info('>' + seq + '\n' + seq)
+                        break
+                    bits = encode(seq)
+                    if bits not in uniq_hash:
+                        uniq_hash[bits] = uniq_hash.get(bits, 0) + 1
+                        logging.info('>' + seq + '\n' + seq)
+                    else:
+                        uniq_hash[bits] = uniq_hash.get(bits, 0) + 1
                 else:
-                    uniq_hash[bits] = uniq_hash.get(bits, 0) + 1
+                    logging.info('>' + seq + '\n' + seq)
                 break
 
 
