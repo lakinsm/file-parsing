@@ -18,13 +18,14 @@ import sys
 import logging
 import resource
 import itertools
+import collections
 
 
 ##########
 ## Vars ##
 ##########
 db_hash = set()  # object for the hash table
-uniq_hash = mp.Manager().dict()  # thread-locked dictionary for workers
+uniq_hash = collections.Counter()  # store unique reads and counts
 chunksize = 20000000  # limit memory consumption by reading in blocks
 window = 20  # k-mer size
 overall = 0  # counter for stderr writing
@@ -45,6 +46,7 @@ def worker(chunk):
     :return: void
     """
     global db_hash
+    barray = ()
     for read_name, seq in chunk:
         global window
         for i in range(len(seq) - window + 1):
@@ -55,11 +57,7 @@ def worker(chunk):
                         logging.info('>' + seq + '\n' + seq)
                         break
                     bits = encode(seq)
-                    if bits not in uniq_hash:
-                        uniq_hash[bits] = uniq_hash.get(bits, 0) + 1
-                        logging.info('>' + seq + '\n' + seq)
-                    else:
-                        uniq_hash[bits] = uniq_hash.get(bits, 0) + 1
+                    barray += bits
                 else:
                     logging.info('>' + seq + '\n' + seq)
                 break
@@ -324,8 +322,11 @@ if __name__ == '__main__':
             del pool
             break
         res = pool.map(worker, chunks)  # pool.map is MapReduce.  All workers must finish before proceeding.
+        if args.unique:
+            uniq_hash += sum((x for x in res), collections.Counter())
         handler.flush()  # flush the logging cache to stdout
         sys.stderr.write('\nFinished block.  Loading next chunk\n')
+        del res
         del chunks  # remove chunks from memory.  Otherwise memory usage will be doubled.
         if check < chunksize:
             pool.close()  # ask nicely
@@ -342,4 +343,6 @@ if __name__ == '__main__':
             for key, value in uniq_hash.items():
                 if value > 1:
                     dupfile.write(key + b'\@@' + value.to_bytes(4, 'big') + b'\..')
+                seq = decode_all(key)
+                sys.stdout.write('>' + seq + '\n' + seq + '\n')
 
