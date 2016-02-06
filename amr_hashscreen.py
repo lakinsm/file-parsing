@@ -52,7 +52,6 @@ def worker(chunk):
         for i in range(len(seq) - window + 1):
             subseq = seq[i:i + window]
             if subseq in db_hash:
-                sys.stderr.write('hit\n')
                 if args.unique:
                     if any([x in seq for x in iupac]):
                         logging.info('>' + seq + '\n' + seq)
