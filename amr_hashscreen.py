@@ -44,7 +44,7 @@ def worker(chunk):
     """
     global db_hash
     global window
-    barray = ()
+    barray = collections.Counter()
     for read_name, seq in chunk:
         for i in range(len(seq) - window + 1):
             subseq = seq[i:i + window]
@@ -54,7 +54,7 @@ def worker(chunk):
                 else:
                     logging.info('>' + seq + '\n' + seq)
                 break
-    return collections.Counter(barray)
+    return barray
 
 
 def fastq_parse():
