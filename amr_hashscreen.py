@@ -17,14 +17,12 @@ import multiprocessing as mp
 import sys
 import logging
 import resource
-import collections
 
 
 ##########
 ## Vars ##
 ##########
 db_hash = set()  # object for the hash table
-uniq_hash = collections.Counter()  # store unique reads and counts
 chunksize = 20000000  # limit memory consumption by reading in blocks
 window = 20  # k-mer size
 overall = 0  # counter for stderr writing
@@ -44,17 +42,12 @@ def worker(chunk):
     """
     global db_hash
     global window
-    barray = collections.Counter()
     for read_name, seq in chunk:
         for i in range(len(seq) - window + 1):
             subseq = seq[i:i + window]
             if subseq in db_hash:
-                if args.unique:
-                    barray += collections.Counter((seq, ))
-                else:
-                    logging.info('>' + seq + '\n' + seq)
+                logging.info('>' + seq + '\n' + seq)
                 break
-    return barray
 
 
 def fastq_parse():
@@ -133,8 +126,6 @@ parser.add_argument('-p', '--pickle', type=str, default=None, help='Optional fla
 parser.add_argument('-s', '--save', type=str, default=None, help='Optional: save the hash table to a pickle file')
 parser.add_argument('-n', '--num_process', type=int, default=1, help='Number of processes to run in parallel')
 parser.add_argument('-k', '--kmer', type=int, default=15, help='K-mer size')
-parser.add_argument('-u', '--unique', type=str, default=None,
-                    help='File to store hashes of unique read counts for HMMER (use for highly redundant fastq files)')
 
 
 ##########
@@ -189,7 +180,7 @@ if __name__ == '__main__':
         sys.stderr.write('\nMemory used: {}MB'.format(current_mem_usage()))
         check = sum([len(x) for x in chunks])  # this is the break condition for the while loop (count of reads)
         overall += check  # add to overall read count for reporting to stderr
-        sys.stderr.write('\nTotal reads processed {}'.format(overall))
+        sys.stderr.write('\nTotal sequences read {}, screening...'.format(overall))
         if check is 0:
             pool.close()
             pool.join()
@@ -197,11 +188,8 @@ if __name__ == '__main__':
             del pool
             break
         res = pool.map(worker, chunks)  # pool.map is MapReduce.  All workers must finish before proceeding.
-        if args.unique:
-            uniq_hash += sum((x for x in res), collections.Counter())
         handler.flush()  # flush the logging cache to stdout
         sys.stderr.write('\nFinished block.  Loading next chunk\n')
-        del res
         del chunks  # remove chunks from memory.  Otherwise memory usage will be doubled.
         if check < chunksize:
             pool.close()  # ask nicely
@@ -209,14 +197,6 @@ if __name__ == '__main__':
             pool.terminate()  # sigkill
             del pool  # make sure pool is cleared
             break
-    sys.stderr.write('\nTotal reads processed {}'.format(overall))
+    sys.stderr.write('\nTotal sequences read {}'.format(overall))
 
-    ## Write to duplicate mapping file if --unique flag is set
-    if args.unique:
-        sys.stderr.write('\nWriting duplicate hash values\n')
-        with open(args.unique, 'wb') as dupfile:
-            for key, value in uniq_hash.items():
-                if value > 1:
-                    dupfile.write('>' + key + '\n' + value + '\n')
-                sys.stdout.write('>' + key + '\n' + key + '\n')
 
