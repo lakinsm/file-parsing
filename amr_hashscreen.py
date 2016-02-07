@@ -50,7 +50,7 @@ def worker(chunk):
             subseq = seq[i:i + window]
             if subseq in db_hash:
                 if args.unique:
-                    barray += (seq, )
+                    barray += collections.Counter((seq, ))
                 else:
                     logging.info('>' + seq + '\n' + seq)
                 break
