@@ -174,8 +174,8 @@ if __name__ == '__main__':
     ## Read in each fastq chunk and check for membership.  Chunk size should be set such that
     ## the block size doesn't overflow memory.  Keep in mind this block size has the potential to be doubled
     ## in the logging cache.  Chunksize is set to 20 million reads for Bovine.
+    pool = mp.Pool(processes=args.num_process)  # create pool of workers for parallel processing
     while True:
-        pool = mp.Pool(processes=args.num_process)  # create pool of workers for parallel processing
         chunks = [z for z in split([x for x in fastq_parse()], args.num_process)]  # divide reads into chunks
         sys.stderr.write('\nMemory used: {}MB'.format(current_mem_usage()))
         check = sum([len(x) for x in chunks])  # this is the break condition for the while loop (count of reads)
@@ -197,6 +197,8 @@ if __name__ == '__main__':
             pool.terminate()  # sigkill
             del pool  # make sure pool is cleared
             break
+        del check
+        del res
     sys.stderr.write('\nTotal sequences read {}'.format(overall))
 
 
