@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 """Parse a HMMer tblout file line by line, storing relevant information.  Output a vector for each gene that allows
 for subsequent calculation of coverage and skewness of the read distribution for each HMM.  If a truthset is provided,
