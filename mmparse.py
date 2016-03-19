@@ -13,9 +13,8 @@ import os.path
 import argparse
 import numpy as np
 import sys
-import re
 import matplotlib as mpl  # load mpl to set the output device, then load pyplot as plt
-mpl.use('Agg')  # No X server running on Bovine, use Agg for png generation instead
+mpl.use('Agg')  # No X server running on cluster, use Agg for png generation instead
 import matplotlib.pyplot as plt
 
 
@@ -34,20 +33,17 @@ class TbloutParser:
     hash-mapping of header to sequence information.  Only one line will be held in memory at a time using this method.
     """
 
-    def __init__(self, filepath, outpath, filename, length, evalue=10, multi=False, clstr_file=None,
-                 annot_file=None, dupfile=None):
+    def __init__(self, filepath, outpath, filename, model_annot, model_set, evalue=10, multi=False, dupfile=None):
         """
         Constructor; can't touch this.  This is a hellish nightmare of an __init__ function.
         All of sound mind, turn back now.
         :param filepath: filepath to input hmmer tblout file
         :param outpath: path to output directory
         :param filename: basename for the output file (excluding extension)
-        :param length: filepath to the file containing the hmm lengths
+        :param model_annot: filepath to the file containing the overall HMM annotations
+        :param model_set: model set being used, maps (1,2, 3) -> (groupI, groupII, groupIII)
         :param evalue: Evalue threshold below which to keep a hit
         :param multi: optional flag to correct for multiple reads, maintaining a 1 to 1 ratio of reads to counts
-        :param clstr_file: optional filepath to the .clstr file from cd-hit from hmm generation step
-        :param annot_file: optional filepath to the hmmer_annotation file for each gene
-        :param kmer: optional prefix to append to file basename if analyzing kmer outputs
         :param dupfile: optional filepath to the table of duplicate counts if used in previous pipeline steps
         :return: name, len, start, stop, str of filepath
         """
@@ -70,49 +66,24 @@ class TbloutParser:
         self.class_observed = {}  # Mapping of Classes to hits observed
         self.mech_observed = {}  # Mapping of Mechanisms to hits observed
         self.group_observed = {}  # Mapping of Groups to hits observed
-        self.clstr_members = {}  # Mapping of hmm # -> genes used to build that HMM
         self.hmm_lengths = {}  # Length of each hmm, hmm # -> length
         self.gene_multihits = {}  # Will store HMM hits for each gene
-        with open(length, 'r') as hmm_length:
-            data = hmm_length.read().split('\n')[1:]
-            for line in data:
-                line = line.split()
-                if line:
-                    self.hmm_lengths.setdefault(line[0], int(line[1]))
-        with open(clstr_file, 'r') as f:
-            ## Map HMM to its gene members, initialize the HMM two-by-two
-            header_reg = re.compile(r'>(.+?)\.\.\.')
-            line = f.readline()
-            cluster_num = -1  # For zero indexing offset
-            clstr = []
-            while line:
-                if line[0] is ">":
-                    cluster_num += 1
-                    if cluster_num > 0:  # Is this the first entry? If so, skip it
-                        if len(clstr) is 1:  # No singletons
-                            clstr = []
-                        else:
-                            self.clstr_members.setdefault(str(cluster_num), clstr)
-                            clstr = []
-                else:
-                    clstr.append(header_reg.findall(line)[0])  # Begin appending headers before pushing to dict
-                line = f.readline()
-        self.gene_annots = {}  # Mapping from gene name -> annotations
-        with open(annot_file, 'r') as annot:
-            ## Map the gene names to their annotations, initialize the hierarchy two-by-twos
-            data = annot.read().split('\n')
-            for line in data:
-                temp = line.split(',')
-                if temp[0]:
-                    self.gene_annots.setdefault(temp[0], temp[1:])
         self.hmm_annots = {}  # HMM annotation mapping from key (hmm #) -> annotations
-        for key, values in self.clstr_members.items():
-            ## Calculate the annotations of each HMM, combining around a pipe '|' if multiple
-            classes, mechs, groups = zip(*[self.gene_annots[x] for x in values])
-            classes = [x for x in classes if x]
-            mechs = [x for x in mechs if x]
-            groups = [x for x in groups if x]
-            self.hmm_annots.setdefault(key, ['|'.join(set(classes)), '|'.join(set(mechs)), '|'.join(set(groups))])
+        if model_set == 1:
+            self.set = 'groupI'
+        elif model_set == 2:
+            self.set = 'groupII'
+        else:
+            self.set = 'groupIII'
+        with open(model_annot, 'r') as hmm_annots:
+            data = hmm_annots.read().split('\n')[1:]
+            for line in data:
+                line = line.split('\t')
+                if line[0] != self.set:
+                    continue
+                if line:
+                    self.hmm_lengths.setdefault(line[1], int(line[3]))
+                    self.hmm_annots.setdefault(line[1], line[4].split(','))
         if dupfile:
             with open(dupfile, 'r') as indup:
                 ## Put each gene header into a key and its counts into the value.  Initialize the obs count dict
@@ -276,12 +247,11 @@ parser = argparse.ArgumentParser('hmmer_parse.py')
 parser.add_argument('input', type=str, help='File path to HMMer tblout file, or "-" for stdin')
 parser.add_argument('output', type=str, help='Base directory path for desired outputs')
 parser.add_argument('filename', type=str, help='File name for this particular file (.csv format')
-parser.add_argument('hmm_len', type=str, help='Path to file containing HMM lengths')
-parser.add_argument('clstr', type=str, help='Path to file containing clstr generation info')
-parser.add_argument('annots', type=str, help='Path to annotation file')
+parser.add_argument('model_annots', type=str, help='Path to master model annotation file')
+parser.add_argument('model_set', type=int, help='Model set to use (1, 2, 3)')
 parser.add_argument('-d', '--dupfile', type=str, default=None,
                     help='Path to duplicate count file if used in the kmer screen')
-parser.add_argument('-e', '--evalue', type=float, default=1e-14, help='Evalue under which to keep hits')
+parser.add_argument('-e', '--evalue', type=float, default=10, help='Evalue under which to keep hits')
 parser.add_argument('-m', '--multicorrect', action='store_true', default=False,
                     help='If set, reads have a one to one mapping with reported hits')
 parser.add_argument('-s', '--skewfile', type=str, default=None, help='Optional output file for HMM skewness metrics')
@@ -312,8 +282,8 @@ if __name__ == '__main__':
     ## Output a master file describing each mapped vector/metric and a coverage graph for each mapped gene.
     vector_hash = {}  # This stores gene names that were referenced in the SAM file, along with their vectors
     vector_counts = {}  # This stores gene names as in the other dictionary, but stores read counts instead
-    for line in TbloutParser(infile, outpath, args.filename, args.hmm_len, args.evalue, args.multicorrect,
-                             args.clstr, args.annots, args.dupfile):
+    for line in TbloutParser(infile, outpath, args.filename, args.model_annots, args.model_set, args.evalue,
+                             args.multicorrect, args.dupfile):
         if args.skewfile:
             if not line:
                 continue
@@ -354,5 +324,5 @@ if __name__ == '__main__':
                         plt.xlabel('Nucleotide Position')
                         plt.ylabel('Observed Count')
                         plt.title('Coverage Plot for {}'.format(key))
-                        plt.savefig(graph_dir + '/' + '{}.png'.format(key))
+                        plt.savefig(args.graphs + '/' + '{}.png'.format(key))
                         plt.close()  # make sure plot is closed
