@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 """Parse a HMMer tblout file line by line, storing relevant information.  Output a vector for each gene that allows
 for subsequent calculation of coverage and skewness of the read distribution for each HMM.  If a truthset is provided,
@@ -55,16 +55,22 @@ class HmmerTime:
     """
 
     def __init__(self, filepath, outpath, filename, length, evalue=10, multi=False, truthset=None, clstr_file=None,
-                 annot_file=None, kmer=None, resfams=None):
+                 annot_file=None, kmer=None, resfams=None, dupfile=None):
         """
         Constructor; can't touch this.  This is a hellish nightmare of an __init__ function.
         All of sound mind, turn back now.
         :param filepath: filepath to input hmmer tblout file
+        :param outpath: path to output directory
+        :param filename: basename for the output file (excluding extension)
+        :param length: filepath to the file containing the hmm lengths
         :param evalue: Evalue threshold below which to keep a hit
+        :param multi: optional flag to correct for multiple reads, maintaining a 1 to 1 ratio of reads to counts
         :param truthset: optional filepath to counts from each unique truth accession (format is output of uniq -c)
         :param clstr_file: optional filepath to the .clstr file from cd-hit from hmm generation step
         :param annot_file: optional filepath to the hmmer_annotation file for each gene
-        :param hmm_annot: optional filepath mapping each hmm_query name (this is a number) to its annotations
+        :param kmer: optional prefix to append to file basename if analyzing kmer outputs
+        :param resfams: optional filepath if the input is a resfams tblout scan file
+        :param dupfile: optional filepath to the table of duplicate counts if used in previous pipeline steps
         :return: name, len, start, stop, str of filepath
         """
         if os.path.exists(filepath):  # if file is a file, read from the file
@@ -82,6 +88,8 @@ class HmmerTime:
         self.ethreshold = float(evalue)
         self.multicorrect = multi
         self.resfams = resfams
+        self.duplicate = dupfile
+        self.duplicate_table = {}  # Counts of duplicate reads from kmer screen
         self.hmm_observed = {}  # Mapping of HMMs to hits observed
         self.class_observed = {}  # Mapping of Classes to hits observed
         self.mech_observed = {}  # Mapping of Mechanisms to hits observed
@@ -141,6 +149,15 @@ class HmmerTime:
                 for line in data:
                     temp = line.split('\t')
                     self.resfams_annots.setdefault(temp[0], temp[1:])
+        if dupfile:
+            with open(dupfile, 'r') as indup:
+                ## Put each gene header into a key and its counts into the value.  Initialize the obs count dict
+                data = indup.read().split('\n')
+                for line in data:
+                    if line:
+                        temp = line.split()
+                        if temp and int(temp[0]) > 1:
+                            self.duplicate_table.setdefault(temp[1], int(temp[0]))
         if truthset:
             ## This section is complicated.  To calculate two-by-twos, we need to keep track of several things:
             ## 1. The true number of reads that map to a given gene from the test set
@@ -260,17 +277,34 @@ class HmmerTime:
                             except KeyError:
                                 self.gene_multihits.setdefault(read_name, {temp[2]: 1})
                     else:
-                        try:
-                            self.hmm_observed[temp[2]] += 1
-                        except KeyError:
-                            self.hmm_observed.setdefault(temp[2], 1)
-                        try:
-                            self.gene_multihits[read_name][temp[2]] += 1
-                        except KeyError:
+                        if self.duplicate:
                             try:
-                                self.gene_multihits[read_name].setdefault(temp[2], 1)
+                                multiplier = self.duplicate_table[read_name]
                             except KeyError:
-                                self.gene_multihits.setdefault(read_name, {temp[2]: 1})
+                                multiplier = 1
+                            try:
+                                self.hmm_observed[temp[2]] += multiplier
+                            except KeyError:
+                                self.hmm_observed.setdefault(temp[2], multiplier)
+                            try:
+                                self.gene_multihits[read_name][temp[2]] += multiplier
+                            except KeyError:
+                                try:
+                                    self.gene_multihits[read_name].setdefault(temp[2], multiplier)
+                                except KeyError:
+                                    self.gene_multihits.setdefault(read_name, {temp[2]: multiplier})
+                        else:
+                            try:
+                                self.hmm_observed[temp[2]] += 1
+                            except KeyError:
+                                self.hmm_observed.setdefault(temp[2], 1)
+                            try:
+                                self.gene_multihits[read_name][temp[2]] += 1
+                            except KeyError:
+                                try:
+                                    self.gene_multihits[read_name].setdefault(temp[2], 1)
+                                except KeyError:
+                                    self.gene_multihits.setdefault(read_name, {temp[2]: 1})
                     return temp[2], self.hmm_lengths[temp[2]], temp[4], temp[5], temp[11]  # name, len, start, stop, str
         self.hmmer_file.close()  # catch all in case this line is reached
         assert False, 'Should not reach this line'
@@ -512,19 +546,22 @@ parser.add_argument('input', type=str, help='File path to HMMer tblout file, or 
 parser.add_argument('output', type=str, help='Base directory path for desired outputs')
 parser.add_argument('filename', type=str, help='File name for this particular file (.csv format')
 parser.add_argument('hmm_len', type=str, help='Path to file containing HMM lengths')
-parser.add_argument('graph_dir', type=str, help='Path to output directory for graphs')
 parser.add_argument('clstr', type=str, help='Path to file containing clstr generation info')
 parser.add_argument('annots', type=str, help='Path to annotation file')
+parser.add_argument('-d', '--dupfile', type=str, default=None,
+                    help='Path to duplicate count file if used in the kmer screen')
 parser.add_argument('-e', '--evalue', type=float, default=1e-14, help='Evalue under which to keep hits')
-parser.add_argument('-t', '--truthset', nargs='?', default=None,
+parser.add_argument('-t', '--truthset', type=str, default=None,
                     help='Path to file containing uniq -c style truth set counts')
 parser.add_argument('-m', '--multicorrect', action='store_true', default=False,
                     help='If set, reads have a one to one mapping with reported hits')
-parser.add_argument('-s', '--skewfile', nargs='?', default=None, help='Optional output file for HMM skewness metrics')
-parser.add_argument('-k', '--kmer', nargs='?', default=None,
+parser.add_argument('-s', '--skewfile', type=str, default=None, help='Optional output file for HMM skewness metrics')
+parser.add_argument('-k', '--kmer', type=str, default=None,
                     help='Optional k-mer length to append to filename for debug or testing purposes')
-parser.add_argument('-r', '--resfams', nargs='?', default=None,
+parser.add_argument('-r', '--resfams', type=str, default=None,
                     help='Optional input file for resfams metadata.  If set, input is resfams tblout.scan file')
+parser.add_argument('-g', '--graphs', type=str, help='Path to output directory for graphs')
+
 
 ##########
 ## Main ##
@@ -534,10 +571,14 @@ if __name__ == '__main__':
     args = parser.parse_args()
     infile = args.input
     outpath = args.output
-    graph_dir = args.graph_dir
     if args.skewfile:
-        if not os.path.isdir(graph_dir):
-            os.mkdir(graph_dir)
+        if args.graphs:
+            graph_dir = args.graphs
+            if not os.path.isdir(graph_dir):
+                os.mkdir(graph_dir)
+        else:
+            sys.stdout.write('\nGraph directory not defined, using output directory by default\n')
+            graph_dir = outpath
     if not os.path.isdir(outpath):
         os.mkdir(outpath)
 
@@ -547,7 +588,7 @@ if __name__ == '__main__':
     vector_hash = {}  # This stores gene names that were referenced in the SAM file, along with their vectors
     vector_counts = {}  # This stores gene names as in the other dictionary, but stores read counts instead
     for line in HmmerTime(infile, outpath, args.filename, args.hmm_len, args.evalue, args.multicorrect, args.truthset,
-                          args.clstr, args.annots, args.kmer, args.resfams):
+                          args.clstr, args.annots, args.kmer, args.resfams, args.dupfile):
         if not line:
             continue
         if int(line[2]) < int(line[3]):

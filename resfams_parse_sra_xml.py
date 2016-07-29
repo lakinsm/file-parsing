@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 ## Parse the SRA XML metadata from the Resfams testsets, output a mapping from sample name to truth label
 
@@ -19,5 +19,15 @@ if args.set == 'pediatric':
         for i in root.getchildren():
             temp = str(i.getchildren()[0].getchildren()[1]).split(' ')
             library, truth = (temp[-1], temp[0])
+            sample = i.getchildren()[6].getchildren()[0].attrib['accession']
+            out.write(sample + ',' + library + ',' + truth + '\n')
+
+elif args.set == 'soil':
+    with open(args.input, 'r') as infile, open(args.output, 'w') as out:
+        tree = objectify.parse(infile)
+        root = tree.getroot()
+        for i in root.getchildren():
+            temp = str(i.getchildren()[0].getchildren()[1]).split('_')
+            library, truth = (temp[0], temp[1])
             sample = i.getchildren()[6].getchildren()[0].attrib['accession']
             out.write(sample + ',' + library + ',' + truth + '\n')

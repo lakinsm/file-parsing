@@ -2,6 +2,7 @@
 
 ## Imports
 import argparse
+import re
 
 parser = argparse.ArgumentParser('python subsetFasta.py')
 parser.add_argument('fasta_file', type=str, help="Input FASTA File")
@@ -9,6 +10,7 @@ parser.add_argument('output', type=str, help="Output FASTA File")
 parser.add_argument('-s', '--subset_file', type=str, help="Optional file of headers for subset")
 parser.add_argument('-q', '--fastq', action='store_true', help='Is the file fastq?')
 parser.add_argument('-u', '--unique', action = 'store_true', help='Optional flag to make read names unique')
+parser.add_argument('-c', '--clean', action='store_true', help='Clean the sequence headers for unusual characters')
 
 args = parser.parse_args()
 
@@ -86,6 +88,8 @@ else:
         else:
             for header, seq in data:
                 header = header.replace(' ', '_')
+                if args.clean:
+                    header = re.sub(r'\W', '', header)
                 if len(seq) > 124:
                     seq = seq[0:124]
                 if args.unique:
