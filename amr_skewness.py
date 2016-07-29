@@ -146,6 +146,7 @@ if __name__ == '__main__':
         plt.ioff()  # no interactive mode
         plt.hold(False)  # don't keep plot
         for key, value in vector_hash.iteritems():
+            key = key.replace('/', '|')
             if sum(value > 0):  # if the gene had reads aligned
                 plot_count += 1
                 sys.stdout.write("\rPlots generated: {}".format(plot_count))  # update counter for user benefit
